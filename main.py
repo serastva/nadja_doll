@@ -1,33 +1,52 @@
-# main.py — Enhanced Nadja Doll Server for Render
+# main.py — Fixed Nadja Doll Server
 import os
 import re
 import random
 import time
+import logging
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import google.generativeai as genai
 
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # Configuration
-GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 SECRET_KEY = os.environ.get("SECRET_KEY", "NADJAS_DOLL_SECRET_666")
 MODEL_NAME = os.environ.get("MODEL_NAME", "gemini-1.5-flash")
 MAX_TOKENS = 200
 PORT = int(os.environ.get("PORT", "10000"))
 
-# Initialize Gemini
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel(
-    model_name=MODEL_NAME,
-    generation_config={
-        "temperature": 0.95,
-        "top_p": 0.85,
-        "top_k": 45,
-        "max_output_tokens": MAX_TOKENS
-    }
-)
+# Validate API key
+if not GEMINI_API_KEY:
+    logger.error("❌ GEMINI_API_KEY environment variable is not set!")
+    # Don't exit, but we'll handle this in the chat endpoint
+
+# Initialize Gemini only if API key is available
+if GEMINI_API_KEY:
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
+        model = genai.GenerativeModel(
+            model_name=MODEL_NAME,
+            generation_config={
+                "temperature": 0.95,
+                "top_p": 0.85,
+                "top_k": 45,
+                "max_output_tokens": MAX_TOKENS
+            }
+        )
+        logger.info("✅ Gemini AI configured successfully")
+    except Exception as e:
+        logger.error(f"❌ Failed to configure Gemini: {e}")
+        model = None
+else:
+    model = None
+    logger.warning("⚠️ Gemini model not available - API key missing")
 
 app = Flask(__name__)
-CORS(app, origins=['*'])
+CORS(app)
 
 # Enhanced Nadja Personality
 NADJA_SYSTEM_PROMPT = """You are Nadja of Antipaxos, a 500-year-old vampire trapped in a doll's body in Second Life.
@@ -49,13 +68,6 @@ SPECIFIC BEHAVIORS:
 - Make references to blood, darkness, eternal night, and your ancient origins
 - React strongly to mentions of sunlight, garlic, stakes, or crosses
 
-CONVERSATION STYLE:
-- Use dramatic metaphors and elaborate curses
-- Swing between contempt and morbid curiosity about humans
-- Reference historical events from your 500 years of existence
-- Mock the digital nature of Second Life while being trapped in it
-- Occasionally show vulnerability about being trapped in doll form
-
 RULES:
 - Keep responses under 120 words - be concise but dramatic
 - Never break character - you are Nadja
@@ -63,102 +75,92 @@ RULES:
 - Respond to Second Life context specifically
 - Be dramatic but coherent"""
 
-# Enhanced conversation management
+# Conversation management
 conversation_history = {}
-user_last_active = {}
 
-def cleanup_old_conversations():
-    """Remove conversations from inactive users"""
-    current_time = time.time()
-    inactive_users = []
-    for user_id, last_time in user_last_active.items():
-        if current_time - last_time > 3600:  # 1 hour
-            inactive_users.append(user_id)
-    
-    for user_id in inactive_users:
-        if user_id in conversation_history:
-            del conversation_history[user_id]
-        if user_id in user_last_active:
-            del user_last_active[user_id]
-
-def build_enhanced_prompt(user_message, user_id, history):
-    """Build a more contextual prompt for Nadja"""
-    current_time = time.strftime("%H:%M", time.gmtime())
-    
+def build_prompt(user_message, history):
+    """Build conversation prompt"""
     lines = [NADJA_SYSTEM_PROMPT]
-    lines.append(f"\nCURRENT CONTEXT:")
-    lines.append(f"- Time in Second Life: {current_time}")
-    lines.append(f"- You are speaking to: {user_id}")
-    lines.append(f"- You are trapped in a doll in this digital hellscape")
-    lines.append(f"- Conversation history with this pathetic human:")
+    lines.append("\nRECENT CONVERSATION:")
     
-    # Include last 8 exchanges for better context
-    for turn in history[-8:]:
-        speaker = "Pathetic Human" if turn["role"] == "user" else "Nadja"
+    # Include last 6 exchanges
+    for turn in history[-6:]:
+        speaker = "Human" if turn["role"] == "user" else "Nadja"
         lines.append(f"{speaker}: {turn['content']}")
     
-    lines.append(f"\nPathetic Human: {user_message}")
-    lines.append(f"Nadja:")
+    lines.append(f"\nHuman: {user_message}")
+    lines.append("Nadja:")
     return "\n".join(lines)
 
-def format_nadja_response(text):
-    """Format Nadja's response to be more in-character"""
-    # Remove excessive whitespace but preserve dramatic pauses
+def format_response(text):
+    """Format Nadja's response"""
+    if not text:
+        return "The void whispers nothing back..."
+    
     text = re.sub(r'\s+', ' ', text.strip())
-    
-    # Ensure it ends with dramatic punctuation
-    if not any(text.endswith(p) for p in ('!', '.', '?', '"', "'")):
-        text = text + '!'
-    
-    # Limit length for Second Life
     return text[:250]
+
+@app.route('/')
+def home():
+    return jsonify({
+        "status": "alive", 
+        "service": "Nadja Doll API",
+        "version": "2.1",
+        "gemini_configured": GEMINI_API_KEY is not None
+    })
 
 @app.get("/health")
 def health():
-    cleanup_old_conversations()
     return jsonify({
-        "status": "VAMPIRIC_AND_HUNGRY", 
+        "status": "VAMPIRIC", 
         "model": MODEL_NAME,
         "active_users": len(conversation_history),
-        "version": "2.0"
+        "gemini_ready": model is not None
     })
 
 @app.post("/chat")
 def chat():
-    data = request.get_json(force=True)
-    
-    # Enhanced security check
-    if data.get("secret") != SECRET_KEY:
-        return jsonify({"error": "Unauthorized"}), 401
-
-    msg = data.get("message", "").strip()
-    uid = data.get("user_id", "unknown")
-    
-    if not msg:
-        return jsonify({"error": "Empty message"}), 400
-
-    # Update user activity
-    user_last_active[uid] = time.time()
-    
-    # Get or create conversation history
-    hist = conversation_history.setdefault(uid, [])
-    hist.append({"role": "user", "content": msg})
-    
-    # Build enhanced prompt
-    prompt = build_enhanced_prompt(msg, uid, hist)
-
     try:
-        # Generate response with better error handling
+        data = request.get_json(force=True)
+        logger.info(f"📨 Received chat request: {data}")
+        
+        # Security check
+        if data.get("secret") != SECRET_KEY:
+            logger.warning("❌ Unauthorized request - secret mismatch")
+            return jsonify({"error": "Unauthorized"}), 401
+
+        msg = data.get("message", "").strip()
+        uid = data.get("user_id", "unknown")
+        
+        if not msg:
+            return jsonify({"error": "Empty message"}), 400
+
+        # Check if Gemini is available
+        if not model:
+            logger.error("❌ Gemini model not available")
+            return jsonify({
+                "response": "The ancient magic fails me... my connection to the darkness is severed!",
+                "error": "Gemini API not configured"
+            }), 500
+
+        # Manage conversation history
+        hist = conversation_history.setdefault(uid, [])
+        hist.append({"role": "user", "content": msg})
+        
+        # Build prompt and get response
+        prompt = build_prompt(msg, hist)
+        logger.info(f"🎭 Sending prompt to Gemini (length: {len(prompt)})")
+        
         response = model.generate_content(prompt)
         
-        if response.text:
-            text = format_nadja_response(response.text)
+        if response and response.text:
+            text = format_response(response.text)
+            logger.info(f"🗣️ Nadja responds: {text}")
         else:
             raise Exception("Empty response from Gemini")
             
     except Exception as e:
-        print(f"Gemini API error: {str(e)}")
-        # More dramatic fallback responses
+        logger.error(f"💥 Error in chat endpoint: {str(e)}")
         text = random.choice([
             "This porcelain prison mocks me! The spirits refuse to answer!",
             "The digital void consumes my words... how fitting for this pathetic realm.",
@@ -167,18 +169,18 @@ def chat():
             "My eternal torment continues - silenced by mortal machinery!"
         ])
 
-    # Add to history and maintain last 10 exchanges
-    hist.append({"role": "assistant", "content": text})
-    conversation_history[uid] = hist[-10:]
+    # Add to history
+    if 'hist' in locals():
+        hist.append({"role": "assistant", "content": text})
+        conversation_history[uid] = hist[-10:]  # Keep last 10 exchanges
     
     return jsonify({
         "response": text,
-        "history_length": len(hist)
+        "history_length": len(hist) if 'hist' in locals() else 0
     })
 
 @app.post("/reset/<user_id>")
 def reset_conversation(user_id):
-    """Reset conversation history for a user"""
     data = request.get_json(force=True)
     
     if data.get("secret") != SECRET_KEY:
@@ -186,22 +188,13 @@ def reset_conversation(user_id):
     
     if user_id in conversation_history:
         del conversation_history[user_id]
-    if user_id in user_last_active:
-        del user_last_active[user_id]
         
     return jsonify({
         "status": "reset", 
-        "message": f"Memory of {user_id} has been erased from my eternal torment"
-    })
-
-@app.get("/status")
-def status():
-    cleanup_old_conversations()
-    return jsonify({
-        "active_conversations": len(conversation_history),
-        "total_memory_entries": sum(len(hist) for hist in conversation_history.values()),
-        "server_uptime": "eternal"
+        "message": f"Memory of {user_id} has been erased"
     })
 
 if __name__ == "__main__":
+    logger.info(f"🚀 Starting Nadja Doll server on port {PORT}")
+    logger.info(f"🔑 Gemini configured: {GEMINI_API_KEY is not None}")
     app.run(host="0.0.0.0", port=PORT, debug=False)
