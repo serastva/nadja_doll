@@ -1,4 +1,4 @@
-# main.py — Fixed Nadja Doll Server
+# main.py — Crash-Proof Nadja Doll Server
 import os
 import re
 import random
@@ -6,7 +6,6 @@ import time
 import logging
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import google.generativeai as genai
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -15,26 +14,21 @@ logger = logging.getLogger(__name__)
 # Configuration
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 SECRET_KEY = os.environ.get("SECRET_KEY", "NADJAS_DOLL_SECRET_666")
-MODEL_NAME = os.environ.get("MODEL_NAME", "gemini-1.5-flash")
-MAX_TOKENS = 200
 PORT = int(os.environ.get("PORT", "10000"))
 
-# Validate API key
-if not GEMINI_API_KEY:
-    logger.error("❌ GEMINI_API_KEY environment variable is not set!")
-    # Don't exit, but we'll handle this in the chat endpoint
-
 # Initialize Gemini only if API key is available
+model = None
 if GEMINI_API_KEY:
     try:
+        import google.generativeai as genai
         genai.configure(api_key=GEMINI_API_KEY)
         model = genai.GenerativeModel(
-            model_name=MODEL_NAME,
+            model_name="gemini-1.5-flash",
             generation_config={
                 "temperature": 0.95,
                 "top_p": 0.85,
                 "top_k": 45,
-                "max_output_tokens": MAX_TOKENS
+                "max_output_tokens": 200
             }
         )
         logger.info("✅ Gemini AI configured successfully")
@@ -42,8 +36,7 @@ if GEMINI_API_KEY:
         logger.error(f"❌ Failed to configure Gemini: {e}")
         model = None
 else:
-    model = None
-    logger.warning("⚠️ Gemini model not available - API key missing")
+    logger.error("❌ GEMINI_API_KEY environment variable is not set!")
 
 app = Flask(__name__)
 CORS(app)
@@ -66,7 +59,6 @@ SPECIFIC BEHAVIORS:
 - Find Second Life residents pathetic but occasionally fascinating
 - Speak in first person as Nadja
 - Make references to blood, darkness, eternal night, and your ancient origins
-- React strongly to mentions of sunlight, garlic, stakes, or crosses
 
 RULES:
 - Keep responses under 120 words - be concise but dramatic
@@ -105,24 +97,32 @@ def home():
     return jsonify({
         "status": "alive", 
         "service": "Nadja Doll API",
-        "version": "2.1",
-        "gemini_configured": GEMINI_API_KEY is not None
+        "version": "2.2-crashproof",
+        "gemini_configured": model is not None,
+        "gemini_api_key_set": GEMINI_API_KEY is not None
     })
 
 @app.get("/health")
 def health():
     return jsonify({
         "status": "VAMPIRIC", 
-        "model": MODEL_NAME,
+        "gemini_ready": model is not None,
         "active_users": len(conversation_history),
-        "gemini_ready": model is not None
+        "server_time": time.time()
     })
 
 @app.post("/chat")
 def chat():
     try:
-        data = request.get_json(force=True)
-        logger.info(f"📨 Received chat request: {data}")
+        # Parse request data safely
+        if not request.is_json:
+            return jsonify({"error": "Request must be JSON"}), 400
+            
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "Invalid JSON"}), 400
+        
+        logger.info(f"📨 Received chat request from user")
         
         # Security check
         if data.get("secret") != SECRET_KEY:
@@ -135,66 +135,99 @@ def chat():
         if not msg:
             return jsonify({"error": "Empty message"}), 400
 
-        # Check if Gemini is available
-        if not model:
-            logger.error("❌ Gemini model not available")
-            return jsonify({
-                "response": "The ancient magic fails me... my connection to the darkness is severed!",
-                "error": "Gemini API not configured"
-            }), 500
-
         # Manage conversation history
         hist = conversation_history.setdefault(uid, [])
         hist.append({"role": "user", "content": msg})
         
-        # Build prompt and get response
-        prompt = build_prompt(msg, hist)
-        logger.info(f"🎭 Sending prompt to Gemini (length: {len(prompt)})")
-        
-        response = model.generate_content(prompt)
-        
-        if response and response.text:
-            text = format_response(response.text)
-            logger.info(f"🗣️ Nadja responds: {text}")
+        # Check if Gemini is available
+        if not model:
+            logger.error("Gemini model not available - using fallback response")
+            fallback_responses = [
+                "The ancient magic fails me! My connection to the darkness is severed!",
+                "This technological curse silences my eternal voice!",
+                "Laszlo would mock this mortal machinery failing to channel my essence!",
+                "The digital void consumes my words before they can take form!",
+                "Even as a doll, I deserve better than this broken technology!"
+            ]
+            text = random.choice(fallback_responses)
         else:
-            raise Exception("Empty response from Gemini")
+            # Build prompt and get response
+            prompt = build_prompt(msg, hist)
+            logger.info(f"🎭 Sending prompt to Gemini ({len(prompt)} chars)")
             
-    except Exception as e:
-        logger.error(f"💥 Error in chat endpoint: {str(e)}")
-        text = random.choice([
-            "This porcelain prison mocks me! The spirits refuse to answer!",
-            "The digital void consumes my words... how fitting for this pathetic realm.",
-            "Even the darkness refuses to speak through this cursed doll body!",
-            "Laszlo would find this technological failure most amusing, the bastard!",
-            "My eternal torment continues - silenced by mortal machinery!"
-        ])
+            try:
+                response = model.generate_content(prompt)
+                
+                if response and response.text:
+                    text = format_response(response.text)
+                    logger.info(f"🗣️ Nadja responds: {text}")
+                else:
+                    raise Exception("Empty response from Gemini")
+                    
+            except Exception as e:
+                logger.error(f"💥 Gemini API error: {str(e)}")
+                text = random.choice([
+                    "The spirits mock me from beyond this digital veil!",
+                    "This porcelain prison hums with static instead of dark magic!",
+                    "Even the void refuses to speak through this cursed technology!",
+                    "Laszlo would find this failure most amusing, the bastard!",
+                    "My eternal torment continues - silenced by mortal machinery!"
+                ])
 
-    # Add to history
-    if 'hist' in locals():
+        # Add to history and maintain last 8 exchanges
         hist.append({"role": "assistant", "content": text})
-        conversation_history[uid] = hist[-10:]  # Keep last 10 exchanges
-    
-    return jsonify({
-        "response": text,
-        "history_length": len(hist) if 'hist' in locals() else 0
-    })
+        conversation_history[uid] = hist[-8:]
+        
+        return jsonify({
+            "response": text,
+            "history_length": len(hist),
+            "gemini_used": model is not None
+        })
+        
+    except Exception as e:
+        logger.error(f"💥 Critical error in chat endpoint: {str(e)}")
+        return jsonify({
+            "response": "The very fabric of this digital realm unravels!",
+            "error": "Server error",
+            "history_length": 0
+        }), 500
 
 @app.post("/reset/<user_id>")
 def reset_conversation(user_id):
-    data = request.get_json(force=True)
-    
-    if data.get("secret") != SECRET_KEY:
-        return jsonify({"error": "Unauthorized"}), 401
-    
-    if user_id in conversation_history:
-        del conversation_history[user_id]
+    try:
+        if not request.is_json:
+            return jsonify({"error": "Request must be JSON"}), 400
+            
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "Invalid JSON"}), 400
         
-    return jsonify({
-        "status": "reset", 
-        "message": f"Memory of {user_id} has been erased"
-    })
+        if data.get("secret") != SECRET_KEY:
+            return jsonify({"error": "Unauthorized"}), 401
+        
+        if user_id in conversation_history:
+            del conversation_history[user_id]
+            logger.info(f"Reset conversation history for user: {user_id}")
+        
+        return jsonify({
+            "status": "reset", 
+            "message": f"Memory of {user_id} has been erased from my eternal consciousness"
+        })
+        
+    except Exception as e:
+        logger.error(f"Error in reset endpoint: {str(e)}")
+        return jsonify({"error": "Reset failed"}), 500
+
+@app.errorhandler(404)
+def not_found(error):
+    return jsonify({"error": "Endpoint not found", "available_endpoints": ["/chat", "/health", "/reset/<user_id>"]}), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    return jsonify({"error": "Internal server error"}), 500
 
 if __name__ == "__main__":
-    logger.info(f"🚀 Starting Nadja Doll server on port {PORT}")
-    logger.info(f"🔑 Gemini configured: {GEMINI_API_KEY is not None}")
+    logger.info(f"🚀 Starting Crash-Proof Nadja Doll server on port {PORT}")
+    logger.info(f"🔑 Gemini configured: {model is not None}")
+    logger.info(f"🔑 API Key present: {GEMINI_API_KEY is not None}")
     app.run(host="0.0.0.0", port=PORT, debug=False)
