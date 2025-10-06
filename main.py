@@ -1,4 +1,4 @@
-# main.py — Crash-Proof Nadja Doll Server
+# main.py — Fixed Model Name Nadja Doll Server
 import os
 import re
 import random
@@ -8,7 +8,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 
 # Set up logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # Configuration
@@ -16,27 +16,94 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 SECRET_KEY = os.environ.get("SECRET_KEY", "NADJAS_DOLL_SECRET_666")
 PORT = int(os.environ.get("PORT", "10000"))
 
-# Initialize Gemini only if API key is available
+# Initialize Gemini with correct model names
 model = None
+gemini_available = False
+api_error = "Unknown"
+
 if GEMINI_API_KEY:
     try:
         import google.generativeai as genai
+        logger.info("🔧 Attempting to configure Gemini...")
+        
         genai.configure(api_key=GEMINI_API_KEY)
-        model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
-            generation_config={
-                "temperature": 0.95,
-                "top_p": 0.85,
-                "top_k": 45,
-                "max_output_tokens": 200
-            }
-        )
-        logger.info("✅ Gemini AI configured successfully")
+        
+        # List available models to see what's actually available
+        try:
+            models = genai.list_models()
+            model_names = [m.name for m in models]
+            logger.info(f"📋 Available models: {model_names}")
+            
+            # Find the correct model name
+            supported_models = []
+            for m in models:
+                if 'generateContent' in m.supported_generation_methods:
+                    supported_models.append(m.name)
+                    logger.info(f"✅ Supported model: {m.name}")
+            
+            logger.info(f"🎯 Models supporting generateContent: {supported_models}")
+            
+        except Exception as e:
+            logger.error(f"❌ Cannot list models: {e}")
+            api_error = f"Cannot list models: {str(e)}"
+            raise
+        
+        # Use the correct model name - try different options
+        model_name = None
+        
+        # Try different possible model names
+        possible_models = [
+            "gemini-1.5-flash",  # Newer name
+            "gemini-1.5-flash-001",  # Specific version
+            "gemini-1.0-pro",    # Fallback option
+            "gemini-pro",         # Alternative name
+            "models/gemini-1.5-flash",  # Full path
+            "models/gemini-pro"   # Full path fallback
+        ]
+        
+        for test_model in possible_models:
+            try:
+                logger.info(f"🔧 Testing model: {test_model}")
+                test_model_obj = genai.GenerativeModel(model_name=test_model)
+                test_response = test_model_obj.generate_content("Say 'TEST' only.")
+                if test_response and test_response.text:
+                    model_name = test_model
+                    logger.info(f"✅ Model works: {model_name}")
+                    break
+            except Exception as e:
+                logger.info(f"❌ Model failed {test_model}: {str(e)[:100]}")
+                continue
+        
+        if model_name:
+            model = genai.GenerativeModel(
+                model_name=model_name,
+                generation_config={
+                    "temperature": 0.95,
+                    "top_p": 0.85,
+                    "top_k": 45,
+                    "max_output_tokens": 200
+                }
+            )
+            
+            # Final test
+            test_response = model.generate_content("Say 'NADJA READY' only.")
+            if test_response and test_response.text:
+                logger.info(f"🎉 Gemini configured successfully with model: {model_name}")
+                gemini_available = True
+                api_error = "None"
+            else:
+                raise Exception("Final test failed")
+        else:
+            raise Exception("No working model found")
+            
     except Exception as e:
-        logger.error(f"❌ Failed to configure Gemini: {e}")
+        logger.error(f"❌ Gemini configuration failed: {str(e)}")
         model = None
+        gemini_available = False
+        api_error = str(e)
 else:
     logger.error("❌ GEMINI_API_KEY environment variable is not set!")
+    api_error = "API key not set"
 
 app = Flask(__name__)
 CORS(app)
@@ -97,8 +164,9 @@ def home():
     return jsonify({
         "status": "alive", 
         "service": "Nadja Doll API",
-        "version": "2.2-crashproof",
-        "gemini_configured": model is not None,
+        "version": "2.4-model-fix",
+        "gemini_available": gemini_available,
+        "api_error": api_error,
         "gemini_api_key_set": GEMINI_API_KEY is not None
     })
 
@@ -106,15 +174,14 @@ def home():
 def health():
     return jsonify({
         "status": "VAMPIRIC", 
-        "gemini_ready": model is not None,
-        "active_users": len(conversation_history),
-        "server_time": time.time()
+        "gemini_ready": gemini_available,
+        "gemini_error": api_error,
+        "active_users": len(conversation_history)
     })
 
 @app.post("/chat")
 def chat():
     try:
-        # Parse request data safely
         if not request.is_json:
             return jsonify({"error": "Request must be JSON"}), 400
             
@@ -122,11 +189,8 @@ def chat():
         if not data:
             return jsonify({"error": "Invalid JSON"}), 400
         
-        logger.info(f"📨 Received chat request from user")
-        
         # Security check
         if data.get("secret") != SECRET_KEY:
-            logger.warning("❌ Unauthorized request - secret mismatch")
             return jsonify({"error": "Unauthorized"}), 401
 
         msg = data.get("message", "").strip()
@@ -139,95 +203,76 @@ def chat():
         hist = conversation_history.setdefault(uid, [])
         hist.append({"role": "user", "content": msg})
         
-        # Check if Gemini is available
-        if not model:
-            logger.error("Gemini model not available - using fallback response")
-            fallback_responses = [
-                "The ancient magic fails me! My connection to the darkness is severed!",
-                "This technological curse silences my eternal voice!",
-                "Laszlo would mock this mortal machinery failing to channel my essence!",
-                "The digital void consumes my words before they can take form!",
-                "Even as a doll, I deserve better than this broken technology!"
-            ]
-            text = random.choice(fallback_responses)
-        else:
-            # Build prompt and get response
-            prompt = build_prompt(msg, hist)
-            logger.info(f"🎭 Sending prompt to Gemini ({len(prompt)} chars)")
-            
+        response_text = ""
+        gemini_used_successfully = False
+        
+        # Try to use Gemini if available
+        if gemini_available and model:
             try:
+                prompt = build_prompt(msg, hist)
+                logger.info(f"🎭 Sending to Gemini: '{msg}'")
+                
                 response = model.generate_content(prompt)
                 
                 if response and response.text:
-                    text = format_response(response.text)
-                    logger.info(f"🗣️ Nadja responds: {text}")
+                    response_text = format_response(response.text)
+                    gemini_used_successfully = True
+                    logger.info(f"✅ Gemini success: {response_text}")
                 else:
                     raise Exception("Empty response from Gemini")
                     
             except Exception as e:
-                logger.error(f"💥 Gemini API error: {str(e)}")
-                text = random.choice([
-                    "The spirits mock me from beyond this digital veil!",
-                    "This porcelain prison hums with static instead of dark magic!",
-                    "Even the void refuses to speak through this cursed technology!",
-                    "Laszlo would find this failure most amusing, the bastard!",
-                    "My eternal torment continues - silenced by mortal machinery!"
-                ])
+                logger.error(f"💥 Gemini API call failed: {str(e)}")
+                response_text = f"The spirits mock this technological failure! {str(e)[:30]}"
+        
+        # If Gemini failed or not available, use fallback
+        if not response_text or not gemini_used_successfully:
+            fallback_responses = [
+                "This porcelain prison silences my dark essence!",
+                "The digital void consumes my ancient words!",
+                "Laszlo would laugh at this technological failure!",
+                "Even as a doll, I deserve functioning magic!",
+                "The mortal machinery fails to channel my eternal voice!"
+            ]
+            response_text = random.choice(fallback_responses)
+            logger.warning(f"🔶 Using fallback: {response_text}")
 
-        # Add to history and maintain last 8 exchanges
-        hist.append({"role": "assistant", "content": text})
-        conversation_history[uid] = hist[-8:]
+        # Add to history
+        hist.append({"role": "assistant", "content": response_text})
+        conversation_history[uid] = hist[-6:]
         
         return jsonify({
-            "response": text,
+            "response": response_text,
             "history_length": len(hist),
-            "gemini_used": model is not None
+            "gemini_used": gemini_used_successfully,
+            "gemini_available": gemini_available
         })
         
     except Exception as e:
-        logger.error(f"💥 Critical error in chat endpoint: {str(e)}")
+        logger.error(f"💥 Critical error in chat: {str(e)}")
         return jsonify({
-            "response": "The very fabric of this digital realm unravels!",
-            "error": "Server error",
-            "history_length": 0
+            "response": "The very fabric of this realm unravels!",
+            "error": str(e)
         }), 500
 
 @app.post("/reset/<user_id>")
 def reset_conversation(user_id):
     try:
-        if not request.is_json:
-            return jsonify({"error": "Request must be JSON"}), 400
-            
         data = request.get_json()
-        if not data:
-            return jsonify({"error": "Invalid JSON"}), 400
-        
         if data.get("secret") != SECRET_KEY:
             return jsonify({"error": "Unauthorized"}), 401
         
         if user_id in conversation_history:
             del conversation_history[user_id]
-            logger.info(f"Reset conversation history for user: {user_id}")
         
-        return jsonify({
-            "status": "reset", 
-            "message": f"Memory of {user_id} has been erased from my eternal consciousness"
-        })
-        
+        return jsonify({"status": "reset"})
     except Exception as e:
-        logger.error(f"Error in reset endpoint: {str(e)}")
-        return jsonify({"error": "Reset failed"}), 500
-
-@app.errorhandler(404)
-def not_found(error):
-    return jsonify({"error": "Endpoint not found", "available_endpoints": ["/chat", "/health", "/reset/<user_id>"]}), 404
-
-@app.errorhandler(500)
-def internal_error(error):
-    return jsonify({"error": "Internal server error"}), 500
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
-    logger.info(f"🚀 Starting Crash-Proof Nadja Doll server on port {PORT}")
-    logger.info(f"🔑 Gemini configured: {model is not None}")
-    logger.info(f"🔑 API Key present: {GEMINI_API_KEY is not None}")
+    logger.info("=" * 50)
+    logger.info("🚀 Starting Nadja Doll Server - Model Fix Version")
+    logger.info(f"🔑 Gemini Available: {gemini_available}")
+    logger.info(f"🔑 API Error: {api_error}")
+    logger.info("=" * 50)
     app.run(host="0.0.0.0", port=PORT, debug=False)
