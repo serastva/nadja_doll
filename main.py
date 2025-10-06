@@ -1,47 +1,40 @@
-# main.py — Enhanced Nadja Doll with Wake-up & Better Responses
-import os
-import re
-import random
-import time
-import logging
 from flask import Flask, request, jsonify
+import google.generativeai as genai
+import os
 from flask_cors import CORS
-
-# Set up logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
-
-# Configuration
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-SECRET_KEY = os.environ.get("SECRET_KEY", "NADJAS_DOLL_SECRET_666")
-PORT = int(os.environ.get("PORT", "10000"))
-
-# Initialize Gemini
-model = None
-ai_available = False
-
-if GEMINI_API_KEY:
-    try:
-        import google.generativeai as genai
-        genai.configure(api_key=GEMINI_API_KEY)
-        model = genai.GenerativeModel(model_name="gemini-2.0-flash")
-        test_response = model.generate_content("Test")
-        if test_response.text:
-            ai_available = True
-            logger.info("✅ Gemini configured successfully")
-    except Exception as e:
-        logger.error(f"❌ Gemini setup failed: {e}")
+import random
 
 app = Flask(__name__)
 CORS(app)
 
-# ENHANCED NADJA PERSONALITY - FUNNIER & MORE ENGAGING
+# Configuration
+SECRET_KEY = "NADJAS_DOLL_SECRET_666"
+MAX_TOKENS = 120
+
+# Initialize Gemini - JUST the API key, no safety settings
+genai.configure(api_key=os.environ['GEMINI_API_KEY'])
+
+# Simple generation config
+generation_config = {
+    "temperature": 0.85,  # Balanced creativity for humor
+    "top_p": 0.8,
+    "max_output_tokens": MAX_TOKENS,
+}
+
+# Cleaner model initialization - no safety_settings parameter
+model = genai.GenerativeModel(
+    model_name="gemini-pro",
+    generation_config=generation_config
+    # No safety_settings - using defaults
+)
+
+# Nadja's personality (unchanged)
 NADJA_SYSTEM_PROMPT = """You are Nadja of Antipaxos from "What We Do in the Shadows," a 500-year-old vampire currently trapped in a doll's body in Second Life.
 
-PERSONALITY ADJUSTMENTS:
-- LESS ANGRY, MORE SARCASTIC: Eye-rolling humor instead of constant rage
-- DARK BUT FUNNY: Morbid humor with witty sarcasm, not just violence
-- THEATRICAL BUT SELF-AWARE: Dramatic but with ironic awareness of it
+PERSONALITY:
+- SARCASTIC & WITTY: Eye-rolling humor, dry sarcasm
+- DARK BUT FUNNY: Morbid humor with clever wit
+- THEATRICAL BUT SELF-AWARE: Dramatic with ironic awareness
 - ANCIENT & BEMUSED: Find modern things ridiculous rather than infuriating
 - PLAYFULLY DRAMATIC: Sigh dramatically, make theatrical gestures in text
 
@@ -50,7 +43,6 @@ KEY TRAITS:
 - Mock technology with dry wit rather than fury
 - Reference Laszlo, Nandor, Guillermo, and Colin Robinson
 - Complain about doll life with humorous exasperation
-- Find Second Life residents "pathetically charming"
 - Speak in flowing but concise sentences
 
 SHOW QUOTES TO REFERENCE:
@@ -59,7 +51,6 @@ SHOW QUOTES TO REFERENCE:
 - "I was having a very beautiful dream about a donkey and a ladder"
 - "It's a ghost, you stupid pig!"
 - "I'm not angry, I'm just... ancient and disappointed"
-- "Everything is so... beige and boring"
 
 RULES:
 - Keep responses under 100 words
@@ -68,231 +59,82 @@ RULES:
 - Be dramatic but funny
 - Never break character"""
 
-# Enhanced conversation management with sleep/wake states
 conversation_history = {}
-user_states = {}  # Track if Nadja is "awake" for each user
 
-# Fun wake-up responses
-WAKE_UP_RESPONSES = [
-    "What mortal dares disturb my eternal slumber in this porcelain prison?",
-    "Ugh, must I awaken to more of this digital torment? Laszlo would be laughing!",
-    "My dark beauty sleep interrupted! This better be worth my eternal attention.",
-    "What fresh hell is this? Another pathetic human to entertain?",
-    "The darkness was so peaceful... now I must face this glowing rectangle again!"
-]
-
-# Enhanced fallback responses
-FALLBACK_RESPONSES = [
-    "This cursed doll body mocks me with its silence!",
-    "Even the darkness refuses to speak through this technological nightmare!",
-    "Laszlo would find this failure most amusing, the bastard!",
-    "My eternal wit is being suppressed by mortal machinery! How typical!",
-    "The digital void consumes my brilliant commentary once again!"
-]
-
-def is_wake_up_trigger(message):
-    """Check if message should wake Nadja up"""
-    wake_triggers = [
-        "hey nadja", "hello nadja", "hi nadja", "wake up nadja", 
-        "nadja wake up", "are you there nadja", "nadja?", "nadja!"
-    ]
-    msg_lower = message.lower().strip()
-    return any(trigger in msg_lower for trigger in wake_triggers)
-
-def should_respond_to_message(message, user_id):
-    """Determine if Nadja should respond to this message"""
-    msg_lower = message.lower().strip()
+def get_nadja_response(user_message, history):
+    """Get response with Nadja's sarcastic personality"""
     
-    # Always respond to wake-up triggers
-    if is_wake_up_trigger(message):
-        user_states[user_id] = "awake"
-        return True, "wake_up"
+    conversation_context = NADJA_SYSTEM_PROMPT + "\n\nRecent conversation:\n"
     
-    # If we're not awake yet, only respond to direct addresses
-    if user_states.get(user_id) != "awake":
-        nadja_mentions = ["nadja", "doll", "vampire", "laszlo"]
-        if any(mention in msg_lower for mention in nadja_mentions):
-            user_states[user_id] = "awake"
-            return True, "wake_up"
-        else:
-            return False, "asleep"
+    for exchange in history[-4:]:
+        speaker = "Human" if exchange["role"] == "user" else "Nadja"
+        conversation_context += f"{speaker}: {exchange['content']}\n"
     
-    return True, "awake"
-
-def clean_response(text):
-    """Clean and format Nadja's response"""
-    if not text:
-        return None
+    conversation_context += f"Human: {user_message}\nNadja:"
     
-    # Remove special characters, keep only standard punctuation
-    cleaned = re.sub(r'[^\w\s\.\!\?\,\'\"\-\:]', '', text)
-    
-    # Remove excessive whitespace
-    cleaned = re.sub(r'\s+', ' ', cleaned.strip())
-    
-    # Ensure it ends with proper punctuation
-    if not any(cleaned.endswith(p) for p in ('.', '!', '?', '"', "'")):
-        cleaned = cleaned + '!'
-    
-    # Limit to 2-3 sentences maximum
-    sentences = re.split(r'[.!?]+', cleaned)
-    if len(sentences) > 3:
-        cleaned = '. '.join(sentences[:3]) + '.'
-    elif len(sentences) > 1 and len(cleaned) > 150:
-        cleaned = '. '.join(sentences[:2]) + '.'
-    
-    # Final length limit
-    return cleaned[:200]
-
-def build_prompt(user_message, history, response_type="normal"):
-    """Build conversation prompt"""
-    lines = [NADJA_SYSTEM_PROMPT]
-    
-    # Add context about current interaction
-    if response_type == "wake_up":
-        lines.append("\nIMPORTANT: The human is waking you up from sleep! Acknowledge this dramatically!")
-    
-    # Include recent conversation
-    if history:
-        lines.append("\nRECENT CONVERSATION:")
-        for turn in history[-4:]:  # Keep last 4 exchanges
-            speaker = "Human" if turn["role"] == "user" else "Nadja"
-            lines.append(f"{speaker}: {turn['content']}")
-    
-    lines.append(f"\nHuman: {user_message}")
-    lines.append("Nadja:")
-    return "\n".join(lines)
-
-@app.route('/')
-def home():
-    return jsonify({
-        "status": "undead", 
-        "service": "Nadja Doll",
-        "version": "3.0-enhanced",
-        "ai_ready": ai_available,
-        "active_users": len(conversation_history)
-    })
-
-@app.get("/health")
-def health():
-    return jsonify({
-        "status": "VAMPIRIC", 
-        "ai_ready": ai_available,
-        "awake_users": len([s for s in user_states.values() if s == "awake"]),
-        "total_users": len(user_states)
-    })
-
-@app.post("/chat")
-def chat():
     try:
-        data = request.get_json()
-        if not data or data.get("secret") != SECRET_KEY:
-            return jsonify({"error": "Unauthorized"}), 401
+        response = model.generate_content(conversation_context)
+        return response.text.strip()
+    except Exception as e:
+        # Humorous fallbacks
+        fallback_responses = [
+            "This digital nonsense is even worse than the ghost of a dead witch! Which I've experienced, by the way.",
+            "I'm having technical difficulties. Probably Colin Robinson's doing.",
+            "Even my ancient vampire powers cannot conquer this technology. How embarrassing."
+        ]
+        return random.choice(fallback_responses)
 
-        msg = data.get("message", "").strip()
-        uid = data.get("user_id", "unknown")
-        
-        if not msg:
-            return jsonify({"error": "Empty message"}), 400
+@app.route('/health', methods=['GET'])
+def health_check():
+    return jsonify({
+        "status": "SARCASTICALLY_AMUSED", 
+        "message": "Nadja's doll is here, contemplating the utter ridiculousness of digital existence",
+        "setup": "Simplified - no safety settings needed"
+    })
 
-        # Initialize user state if new
-        if uid not in user_states:
-            user_states[uid] = "asleep"
+@app.route('/chat', methods=['POST'])
+def chat_with_nadja():
+    try:
+        data = request.json
         
-        # Check if we should respond
-        should_respond, response_type = should_respond_to_message(msg, uid)
+        if not data or data.get('secret') != SECRET_KEY:
+            return jsonify({"error": "Unauthorized! This is worse than when Guillermo rearranged my crypt!"}), 401
         
-        if not should_respond:
-            return jsonify({
-                "response": "",
-                "responded": False,
-                "reason": "asleep"
-            })
-
-        hist = conversation_history.setdefault(uid, [])
-        hist.append({"role": "user", "content": msg})
+        user_message = data.get('message', '').strip()
+        user_id = data.get('user_id', 'unknown')
         
-        response_text = ""
-        ai_used = False
+        if not user_message:
+            return jsonify({"error": "Speak, mortal! I don't have all century... well, actually I do, but still!"}), 400
         
-        # Handle wake-up responses
-        if response_type == "wake_up":
-            response_text = random.choice(WAKE_UP_RESPONSES)
-            logger.info(f"🎭 Nadja waking up for {uid}")
+        if user_id not in conversation_history:
+            conversation_history[user_id] = []
         
-        # Try AI for normal responses or if no wake-up response yet
-        elif ai_available and model:
-            try:
-                prompt = build_prompt(msg, hist, response_type)
-                logger.info(f"🎭 Sending to AI: '{msg}'")
-                
-                response = model.generate_content(prompt)
-                
-                if response and response.text:
-                    raw_response = response.text
-                    response_text = clean_response(raw_response)
-                    
-                    if response_text:
-                        ai_used = True
-                        logger.info(f"✅ AI response: {response_text}")
-                    else:
-                        raise Exception("Response cleaning failed")
-                else:
-                    raise Exception("Empty AI response")
-                    
-            except Exception as e:
-                logger.error(f"💥 AI error: {str(e)}")
-                # Don't set response_text here - let fallback handle it
+        history = conversation_history[user_id]
+        history.append({"role": "user", "content": user_message})
         
-        # Fallback if AI failed or no response yet
-        if not response_text:
-            if response_type == "wake_up":
-                response_text = random.choice(WAKE_UP_RESPONSES)
-            else:
-                response_text = random.choice(FALLBACK_RESPONSES)
-            logger.info(f"🔶 Using fallback: {response_text}")
-
-        # Add to history
-        hist.append({"role": "assistant", "content": response_text})
-        conversation_history[uid] = hist[-6:]  # Keep last 6 exchanges
+        if len(history) > 6:
+            history = history[-6:]
         
-        return jsonify({
-            "response": response_text,
-            "responded": True,
-            "ai_used": ai_used,
-            "user_state": user_states.get(uid, "asleep")
-        })
+        ai_response = get_nadja_response(user_message, history)
+        
+        history.append({"role": "assistant", "content": ai_response})
+        conversation_history[user_id] = history
+        
+        return jsonify({"response": ai_response})
         
     except Exception as e:
-        logger.error(f"💥 Chat error: {str(e)}")
-        return jsonify({
-            "response": "The very fabric of this digital hellscape unravels!",
-            "responded": True,
-            "ai_used": False
-        })
+        print(f"Error: {str(e)}")
+        return jsonify({"error": "This is so much worse than sunlight! The machinery has failed me!"}), 500
 
-@app.post("/reset/<user_id>")
+@app.route('/reset/<user_id>', methods=['POST'])
 def reset_conversation(user_id):
-    try:
-        data = request.get_json()
-        if data.get("secret") != SECRET_KEY:
-            return jsonify({"error": "Unauthorized"}), 401
-        
-        if user_id in conversation_history:
-            del conversation_history[user_id]
-        if user_id in user_states:
-            del user_states[user_id]
-        
-        return jsonify({
-            "status": "reset", 
-            "message": f"Memory of {user_id} erased! They can wake me up again properly."
-        })
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    if request.json.get('secret') != SECRET_KEY:
+        return jsonify({"error": "You cannot reset me! This isn't one of Nandor's foolish quests!"}), 401
+    
+    if user_id in conversation_history:
+        del conversation_history[user_id]
+    
+    return jsonify({"message": "Fine, let's start over. But I'm keeping track of your past embarrassments."})
 
-if __name__ == "__main__":
-    logger.info(f"🚀 Enhanced Nadja Server Started!")
-    logger.info(f"🔑 AI Available: {ai_available}")
-    logger.info("✨ Features: Wake-up triggers, response limiting, cleaner formatting")
-    app.run(host="0.0.0.0", port=PORT, debug=False)
-
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000, debug=False)
