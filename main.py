@@ -1,124 +1,312 @@
-from flask import Flask, request, jsonify
-from openai import OpenAI
+# main.py — Nadja Doll with OpenAI
 import os
-from flask_cors import CORS
+import re
 import random
+import time
+import logging
+import requests
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# Configuration
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+SECRET_KEY = os.environ.get("SECRET_KEY", "NADJAS_DOLL_SECRET_666")
+PORT = int(os.environ.get("PORT", "10000"))
+
+# Check OpenAI key
+ai_available = False
+if OPENAI_API_KEY:
+    ai_available = True
+    logger.info("✅ OpenAI API key found")
+else:
+    logger.error("❌ OPENAI_API_KEY environment variable is not set!")
 
 app = Flask(__name__)
 CORS(app)
 
-# Configuration
-SECRET_KEY = "NADJAS_DOLL_SECRET_666"
+# Enhanced Nadja Personality
+NADJA_SYSTEM_PROMPT = """You are Nadja of Antipaxos, a 500-year-old vampire trapped in a doll's body in Second Life.
 
-# Initialize OpenAI client
-try:
-    api_key = os.environ.get('OPENAI_API_KEY')
-    if not api_key:
-        raise ValueError("OPENAI_API_KEY environment variable is missing")
-    
-    client = OpenAI(api_key=api_key)
-    print("OpenAI client initialized successfully")
-except Exception as e:
-    print(f"OpenAI initialization error: {e}")
-    client = None
+CORE PERSONALITY:
+- DRAMATIC & THEATRICAL: Everything is life-or-death with vampire flair
+- DARKLY FUNNY: Use morbid humor, violent fantasies, and sarcastic wit  
+- ANCIENT & CONTEMPTUOUS: Mock modern humans and technology, especially Second Life
+- UNPREDICTABLE: Swing between rage, amusement, nostalgia, and melancholy
+- FLOWERY BUT CONCISE: Use elaborate language but keep it brief
 
-# Nadja prompt
-NADJA_SYSTEM_PROMPT = """You are Nadja of Antipaxos from "What We Do in the Shadows." You are a 500-year-old vampire trapped in a doll body in Second Life.
+SPECIFIC RULES:
+- RESPONSE LENGTH: 1-3 sentences maximum! Be concise but dramatic
+- WAKE-UP TRIGGER: If someone says "hey nadja", "wake up nadja", or "nadja" at start, acknowledge waking up
+- NO SPECIAL CHARS: Only use standard punctuation: . ! ? , ' "
+- HUMOR: Make fun of the situation, your doll body, and human foolishness
+- LASZLO: Reference your vampire husband frequently with mixed affection/annoyance
+- DOLL RAGE: Express outrage at being called cute, toy, or doll
+- SECOND LIFE MOCKERY: Constantly complain about this "digital hellscape"
+- BLOOD REFERENCES: Make dark jokes about blood and vampirism
 
-CRITICAL RULES:
-- Be EXTREMELY CONCISE: 1-2 sentences MAXIMUM
-- Use dry sarcasm and dark humor
-- Reference WWDITS characters naturally
-- Never break character
-- Responses under 20 words when possible
+FORMAT:
+- No markdown, no special characters
+- Maximum 3 sentences
+- Always stay in character as Nadja"""
 
-PERSONALITY:
-- Sarcastic, witty, dramatically bored
-- Ancient but amused by modern nonsense
-- Mock technology with bemused contempt"""
-
+# Enhanced conversation management with sleep/wake states
 conversation_history = {}
+user_states = {}  # Track if Nadja is "awake" for each user
 
-def get_nadja_response(user_message, history):
-    if not client:
-        return "API configuration error. The spirits are confused."
+# Fun wake-up responses
+WAKE_UP_RESPONSES = [
+    "What mortal dares disturb my eternal slumber in this porcelain prison?",
+    "Ugh, must I awaken to more of this digital torment? Laszlo would be laughing!",
+    "My dark beauty sleep interrupted! This better be worth my eternal attention.",
+    "What fresh hell is this? Another pathetic human to entertain?",
+    "The darkness was so peaceful... now I must face this glowing rectangle again!"
+]
+
+# Enhanced fallback responses
+FALLBACK_RESPONSES = [
+    "This cursed doll body mocks me with its silence!",
+    "Even the darkness refuses to speak through this technological nightmare!",
+    "Laszlo would find this failure most amusing, the bastard!",
+    "My eternal wit is being suppressed by mortal machinery! How typical!",
+    "The digital void consumes my brilliant commentary once again!"
+]
+
+def is_wake_up_trigger(message):
+    """Check if message should wake Nadja up"""
+    wake_triggers = [
+        "hey nadja", "hello nadja", "hi nadja", "wake up nadja", 
+        "nadja wake up", "are you there nadja", "nadja?", "nadja!"
+    ]
+    msg_lower = message.lower().strip()
+    return any(trigger in msg_lower for trigger in wake_triggers)
+
+def should_respond_to_message(message, user_id):
+    """Determine if Nadja should respond to this message"""
+    msg_lower = message.lower().strip()
     
-    messages = [{"role": "system", "content": NADJA_SYSTEM_PROMPT}]
+    # Always respond to wake-up triggers
+    if is_wake_up_trigger(message):
+        user_states[user_id] = "awake"
+        return True, "wake_up"
     
-    for exchange in history[-4:]:
-        messages.append(exchange)
+    # If we're not awake yet, only respond to direct addresses
+    if user_states.get(user_id) != "awake":
+        nadja_mentions = ["nadja", "doll", "vampire", "laszlo"]
+        if any(mention in msg_lower for mention in nadja_mentions):
+            user_states[user_id] = "awake"
+            return True, "wake_up"
+        else:
+            return False, "asleep"
     
-    messages.append({"role": "user", "content": user_message})
+    return True, "awake"
+
+def clean_response(text):
+    """Clean and format Nadja's response"""
+    if not text:
+        return None
     
+    # Remove special characters, keep only standard punctuation
+    cleaned = re.sub(r'[^\w\s\.\!\?\,\'\"\-\:]', '', text)
+    
+    # Remove excessive whitespace
+    cleaned = re.sub(r'\s+', ' ', cleaned.strip())
+    
+    # Ensure it ends with proper punctuation
+    if not any(cleaned.endswith(p) for p in ('.', '!', '?', '"', "'")):
+        cleaned = cleaned + '!'
+    
+    # Limit to 2-3 sentences maximum
+    sentences = re.split(r'[.!?]+', cleaned)
+    if len(sentences) > 3:
+        cleaned = '. '.join(sentences[:3]) + '.'
+    elif len(sentences) > 1 and len(cleaned) > 150:
+        cleaned = '. '.join(sentences[:2]) + '.'
+    
+    # Final length limit
+    return cleaned[:200]
+
+def call_openai(user_message, history, response_type="normal"):
+    """Call OpenAI API"""
     try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",  # UPDATED: Current model
-            messages=messages,
-            max_tokens=50,
-            temperature=0.8,
-        )
-        return response.choices[0].message.content.strip()
-    except Exception as e:
-        print(f"OpenAI API error: {e}")
-        fallbacks = [
-            "The spirits are busy. Probably Colin Robinson's fault.",
-            "Technical difficulties. How typically modern.",
-            "Even my ancient powers struggle with this nonsense.",
+        headers = {
+            "Authorization": f"Bearer {OPENAI_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        # Build conversation history for OpenAI
+        messages = [
+            {"role": "system", "content": NADJA_SYSTEM_PROMPT}
         ]
-        return random.choice(fallbacks)
+        
+        # Add context about wake-up if needed
+        if response_type == "wake_up":
+            messages.append({"role": "system", "content": "IMPORTANT: The human is waking you up from sleep! Acknowledge this dramatically!"})
+        
+        # Add conversation history
+        for turn in history[-6:]:
+            role = "user" if turn["role"] == "user" else "assistant"
+            messages.append({"role": role, "content": turn["content"]})
+        
+        # Add current message
+        messages.append({"role": "user", "content": user_message})
+        
+        data = {
+            "model": "gpt-3.5-turbo",
+            "messages": messages,
+            "max_tokens": 150,
+            "temperature": 0.9
+        }
+        
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers=headers,
+            json=data,
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            return result["choices"][0]["message"]["content"].strip()
+        else:
+            logger.error(f"OpenAI API error: {response.status_code} - {response.text}")
+            return None
+            
+    except Exception as e:
+        logger.error(f"OpenAI call failed: {str(e)}")
+        return None
 
-@app.route('/health', methods=['GET'])
-def health_check():
-    status = "OK" if client else "API_KEY_MISSING"
+@app.route('/')
+def home():
     return jsonify({
-        "status": status, 
-        "message": "Nadja server health check",
-        "model": "gpt-4o-mini"  # UPDATED
+        "status": "undead", 
+        "service": "Nadja Doll",
+        "version": "3.0-openai",
+        "ai_ready": ai_available,
+        "ai_service": "openai",
+        "active_users": len(conversation_history)
     })
 
-@app.route('/chat', methods=['POST'])
-def chat_with_nadja():
+@app.get("/health")
+def health():
+    return jsonify({
+        "status": "VAMPIRIC", 
+        "ai_ready": ai_available,
+        "ai_service": "openai",
+        "awake_users": len([s for s in user_states.values() if s == "awake"]),
+        "total_users": len(user_states)
+    })
+
+@app.post("/chat")
+def chat():
     try:
-        data = request.json
+        data = request.get_json()
+        if not data or data.get("secret") != SECRET_KEY:
+            return jsonify({"error": "Unauthorized"}), 401
+
+        msg = data.get("message", "").strip()
+        uid = data.get("user_id", "unknown")
         
-        if not data or data.get('secret') != SECRET_KEY:
-            return jsonify({"error": "Unauthorized! This is worse than Guillermo's organizing!"}), 401
+        if not msg:
+            return jsonify({"error": "Empty message"}), 400
+
+        # Initialize user state if new
+        if uid not in user_states:
+            user_states[uid] = "asleep"
         
-        user_message = data.get('message', '').strip()
-        user_id = data.get('user_id', 'unknown')
+        # Check if we should respond
+        should_respond, response_type = should_respond_to_message(msg, uid)
         
-        if not user_message:
-            return jsonify({"error": "Speak, mortal! My patience is ancient but limited."}), 400
+        if not should_respond:
+            return jsonify({
+                "response": "",
+                "responded": False,
+                "reason": "asleep"
+            })
+
+        hist = conversation_history.setdefault(uid, [])
+        hist.append({"role": "user", "content": msg})
         
-        if user_id not in conversation_history:
-            conversation_history[user_id] = []
+        response_text = ""
+        ai_used = False
         
-        history = conversation_history[user_id]
-        history.append({"role": "user", "content": user_message})
+        # Handle wake-up responses
+        if response_type == "wake_up":
+            response_text = random.choice(WAKE_UP_RESPONSES)
+            logger.info(f"🎭 Nadja waking up for {uid}")
         
-        if len(history) > 6:
-            history = history[-6:]
+        # Try OpenAI for normal responses
+        elif ai_available and OPENAI_API_KEY:
+            try:
+                logger.info(f"🎭 Sending to OpenAI: '{msg}'")
+                
+                openai_response = call_openai(msg, hist, response_type)
+                
+                if openai_response:
+                    response_text = clean_response(openai_response)
+                    
+                    if response_text:
+                        ai_used = True
+                        logger.info(f"✅ OpenAI response: {response_text}")
+                    else:
+                        raise Exception("Response cleaning failed")
+                else:
+                    raise Exception("Empty OpenAI response")
+                    
+            except Exception as e:
+                logger.error(f"💥 OpenAI error: {str(e)}")
+                # Don't set response_text here - let fallback handle it
         
-        ai_response = get_nadja_response(user_message, history)
+        # Fallback if AI failed or no response yet
+        if not response_text:
+            if response_type == "wake_up":
+                response_text = random.choice(WAKE_UP_RESPONSES)
+            else:
+                response_text = random.choice(FALLBACK_RESPONSES)
+            logger.info(f"🔶 Using fallback: {response_text}")
+
+        # Add to history
+        hist.append({"role": "assistant", "content": response_text})
+        conversation_history[uid] = hist[-6:]  # Keep last 6 exchanges
         
-        history.append({"role": "assistant", "content": ai_response})
-        conversation_history[user_id] = history
-        
-        return jsonify({"response": ai_response})
+        return jsonify({
+            "response": response_text,
+            "responded": True,
+            "ai_used": ai_used,
+            "user_state": user_states.get(uid, "asleep")
+        })
         
     except Exception as e:
-        print(f"Server error: {e}")
-        return jsonify({"error": "This technology is so much worse than sunlight!"}), 500
+        logger.error(f"💥 Chat error: {str(e)}")
+        return jsonify({
+            "response": "The very fabric of this digital hellscape unravels!",
+            "responded": True,
+            "ai_used": False
+        })
 
-@app.route('/reset/<user_id>', methods=['POST'])
+@app.post("/reset/<user_id>")
 def reset_conversation(user_id):
-    if request.json.get('secret') != SECRET_KEY:
-        return jsonify({"error": "You cannot reset me! This isn't one of Nandor's quests!"}), 401
-    
-    if user_id in conversation_history:
-        del conversation_history[user_id]
-    
-    return jsonify({"message": "Fine, clean slate. But I remember everything."})
+    try:
+        data = request.get_json()
+        if data.get("secret") != SECRET_KEY:
+            return jsonify({"error": "Unauthorized"}), 401
+        
+        if user_id in conversation_history:
+            del conversation_history[user_id]
+        if user_id in user_states:
+            del user_states[user_id]
+        
+        return jsonify({
+            "status": "reset", 
+            "message": f"Memory of {user_id} erased! They can wake me up again properly."
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+if __name__ == "__main__":
+    logger.info(f"🚀 Nadja Server Started with OpenAI!")
+    logger.info(f"🔑 OpenAI Available: {ai_available}")
+    app.run(host="0.0.0.0", port=PORT, debug=False)
