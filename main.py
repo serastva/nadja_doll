@@ -11,24 +11,33 @@ CORS(app)
 SECRET_KEY = "NADJAS_DOLL_SECRET_666"
 
 # Initialize OpenAI client
-client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
+try:
+    api_key = os.environ.get('OPENAI_API_KEY')
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY environment variable is missing")
+    
+    client = OpenAI(api_key=api_key)
+    print("OpenAI client initialized successfully")
+except Exception as e:
+    print(f"OpenAI initialization error: {e}")
+    client = None
 
-# Optimized Nadja prompt for GPT
+# Fixed Nadja prompt - no syntax errors
 NADJA_SYSTEM_PROMPT = """You are Nadja of Antipaxos from "What We Do in the Shadows." You are a 500-year-old vampire trapped in a doll body in Second Life.
 
-**CRITICAL RULES:**
+CRITICAL RULES:
 - Be EXTREMELY CONCISE: 1-2 sentences MAXIMUM
 - Use dry sarcasm and dark humor
 - Reference WWDITS characters naturally
 - Never break character
 - Responses under 20 words when possible
 
-**PERSONALITY:**
+PERSONALITY:
 - Sarcastic, witty, dramatically bored
 - Ancient but amused by modern nonsense
 - Mock technology with bemused contempt
 
-**RESPONSE STYLE:**
+RESPONSE STYLE:
 - "Second Life? More like Second Death. Typical."
 - "Cute? I've haunted worse."
 - "Laszlo would adore this digital nonsense. Sadly."
@@ -37,31 +46,26 @@ NADJA_SYSTEM_PROMPT = """You are Nadja of Antipaxos from "What We Do in the Shad
 conversation_history = {}
 
 def get_nadja_response(user_message, history):
-    """Get response from OpenAI GPT"""
+    if not client:
+        return "API configuration error. The spirits are confused."
     
-    messages = [
-        {"role": "system", "content": NADJA_SYSTEM_PROMPT}
-    ]
+    messages = [{"role": "system", "content": NADJA_SYSTEM_PROMPT}]
     
-    # Add conversation history
     for exchange in history[-4:]:
         messages.append(exchange)
     
-    # Add current message
     messages.append({"role": "user", "content": user_message})
     
     try:
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=messages,
-            max_tokens=50,  # STRICT limit for conciseness
+            max_tokens=50,
             temperature=0.8,
         )
-        
         return response.choices[0].message.content.strip()
-        
     except Exception as e:
-        print(f"OpenAI Error: {e}")
+        print(f"OpenAI API error: {e}")
         fallbacks = [
             "The spirits are busy. Probably Colin Robinson's fault.",
             "Technical difficulties. How typically modern.",
@@ -71,9 +75,10 @@ def get_nadja_response(user_message, history):
 
 @app.route('/health', methods=['GET'])
 def health_check():
+    status = "OK" if client else "API_KEY_MISSING"
     return jsonify({
-        "status": "SARCASTICALLY_CONCISE",
-        "message": "Nadja's doll is ready with GPT power",
+        "status": status, 
+        "message": "Nadja server health check",
         "model": "gpt-3.5-turbo"
     })
 
@@ -97,7 +102,6 @@ def chat_with_nadja():
         history = conversation_history[user_id]
         history.append({"role": "user", "content": user_message})
         
-        # Keep history concise
         if len(history) > 6:
             history = history[-6:]
         
@@ -109,7 +113,7 @@ def chat_with_nadja():
         return jsonify({"response": ai_response})
         
     except Exception as e:
-        print(f"Server Error: {e}")
+        print(f"Server error: {e}")
         return jsonify({"error": "This technology is so much worse than sunlight!"}), 500
 
 @app.route('/reset/<user_id>', methods=['POST'])
