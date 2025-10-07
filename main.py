@@ -1,4 +1,4 @@
-# main.py — Nadja Doll with Official OpenAI Package
+# main.py — Nadja Doll with Fixed OpenAI Client
 import os
 import re
 import random
@@ -17,24 +17,28 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 SECRET_KEY = os.environ.get("SECRET_KEY", "NADJAS_DOLL_SECRET_666")
 PORT = int(os.environ.get("PORT", "10000"))
 
-# Initialize OpenAI client
+# Initialize OpenAI client - FIXED VERSION
 ai_available = False
 client = None
 
 if OPENAI_API_KEY:
     try:
+        # Simple initialization without extra parameters
         client = OpenAI(api_key=OPENAI_API_KEY)
-        # Test the connection
+        
+        # Test the connection with a simple call
         test_response = client.chat.completions.create(
             model="gpt-3.5-turbo",
-            messages=[{"role": "user", "content": "Say 'TEST' only."}],
+            messages=[{"role": "user", "content": "Say 'TEST SUCCESS' only."}],
             max_tokens=10
         )
+        
         if test_response.choices[0].message.content:
             ai_available = True
             logger.info("✅ OpenAI client configured successfully")
         else:
-            raise Exception("Test failed")
+            raise Exception("Test response empty")
+            
     except Exception as e:
         logger.error(f"❌ OpenAI setup failed: {e}")
         client = None
@@ -80,15 +84,6 @@ WAKE_UP_RESPONSES = [
     "My dark beauty sleep interrupted! This better be worth my eternal attention.",
     "What fresh hell is this? Another pathetic human to entertain?",
     "The darkness was so peaceful... now I must face this glowing rectangle again!"
-]
-
-# Enhanced fallback responses
-FALLBACK_RESPONSES = [
-    "This cursed doll body mocks me with its silence!",
-    "Even the darkness refuses to speak through this technological nightmare!",
-    "Laszlo would find this failure most amusing, the bastard!",
-    "My eternal wit is being suppressed by mortal machinery! How typical!",
-    "The digital void consumes my brilliant commentary once again!"
 ]
 
 def is_wake_up_trigger(message):
@@ -158,23 +153,28 @@ def call_openai(user_message, history, response_type="normal"):
             messages.append({"role": "system", "content": "IMPORTANT: The human is waking you up from sleep! Acknowledge this dramatically!"})
         
         # Add conversation history
-        for turn in history[-6:]:
+        for turn in history[-4:]:  # Reduced to 4 for better context
             role = "user" if turn["role"] == "user" else "assistant"
             messages.append({"role": role, "content": turn["content"]})
         
         # Add current message
         messages.append({"role": "user", "content": user_message})
         
+        logger.info(f"📨 Sending {len(messages)} messages to OpenAI")
+        
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=messages,
-            max_tokens=150,
+            max_tokens=120,  # Reduced for shorter responses
             temperature=0.9
         )
         
         if response.choices[0].message.content:
-            return response.choices[0].message.content.strip()
+            content = response.choices[0].message.content.strip()
+            logger.info(f"📝 Raw OpenAI response: {content}")
+            return content
         else:
+            logger.error("OpenAI returned empty response")
             return None
             
     except Exception as e:
@@ -186,7 +186,7 @@ def home():
     return jsonify({
         "status": "undead", 
         "service": "Nadja Doll",
-        "version": "3.0-openai-official",
+        "version": "3.1-openai-fixed",
         "ai_ready": ai_available,
         "ai_service": "openai",
         "active_users": len(conversation_history)
@@ -252,8 +252,9 @@ def chat():
                     
                     if response_text:
                         ai_used = True
-                        logger.info(f"✅ OpenAI response: {response_text}")
+                        logger.info(f"✅ OpenAI success: {response_text}")
                     else:
+                        logger.warning("Response cleaning returned empty")
                         raise Exception("Response cleaning failed")
                 else:
                     raise Exception("Empty OpenAI response")
@@ -267,12 +268,12 @@ def chat():
             if response_type == "wake_up":
                 response_text = random.choice(WAKE_UP_RESPONSES)
             else:
-                response_text = random.choice(FALLBACK_RESPONSES)
+                response_text = "The spirits mock this technological failure! Even my dark powers cannot penetrate this digital veil!"
             logger.info(f"🔶 Using fallback: {response_text}")
 
         # Add to history
         hist.append({"role": "assistant", "content": response_text})
-        conversation_history[uid] = hist[-6:]  # Keep last 6 exchanges
+        conversation_history[uid] = hist[-6:]
         
         return jsonify({
             "response": response_text,
@@ -303,12 +304,14 @@ def reset_conversation(user_id):
         
         return jsonify({
             "status": "reset", 
-            "message": f"Memory of {user_id} erased! They can wake me up again properly."
+            "message": f"Memory of {user_id} erased!"
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
-    logger.info(f"🚀 Nadja Server Started with Official OpenAI Client!")
+    logger.info("=" * 50)
+    logger.info(f"🚀 Nadja Server Started!")
     logger.info(f"🔑 OpenAI Available: {ai_available}")
+    logger.info("=" * 50)
     app.run(host="0.0.0.0", port=PORT, debug=False)
