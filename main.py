@@ -1,181 +1,125 @@
-# main.py — Nadja Doll (Render-ready, lazy OpenAI init)
+# main.py — Nadja Doll (Render-safe)
 
 import os
-import re
 import random
-import logging
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from openai import OpenAI
 
-# ---------- Config ----------
+app = Flask(__name__)
+CORS(app)
+
+# Config
+SECRET_KEY = os.getenv("SECRET_KEY", "NADJAS_DOLL_SECRET_666")  # set in Render
+MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 PORT = int(os.getenv("PORT", "10000"))
-MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")  # use a current model
-SECRET_KEY = os.getenv("SECRET_KEY", "NADJAS_DOLL_SECRET_666")  # set in Render env for prod
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-log = logging.getLogger("nadja")
-
-# ---------- OpenAI lazy init ----------
+# Lazy OpenAI client
 _client = None
 def get_client():
-    """Create and cache OpenAI client only when needed."""
     global _client
-    if _client:
+    if _client is not None:
         return _client
     key = os.getenv("OPENAI_API_KEY")
     if not key:
         return None
-    _client = OpenAI(api_key=key)
-    return _client
-
-# ---------- Flask ----------
-app = Flask(__name__)
-CORS(app)
-
-# ---------- Nadja persona ----------
-NADJA_SYSTEM_PROMPT = (
-    "You are Nadja of Antipaxos, a 500-year-old vampire trapped in a doll's body in Second Life.\n\n"
-    "CORE PERSONALITY:\n"
-    "- Dramatic, darkly funny, ancient contempt for technology\n"
-    "- Flowery but concise\n\n"
-    "SPECIFIC RULES:\n"
-    "- 1–3 sentences max\n"
-    "- If addressed with 'hey nadja' or 'wake up', acknowledge dramatically\n"
-    "- No markdown; standard punctuation only\n"
-    "- Reference Laszlo occasionally; mock Second Life\n"
-    "- Stay in character"
-)
-
-conversation_history = {}  # {user_id: [ {role, content}, ... ]}
-user_states = {}           # {user_id: "awake"|"asleep"}
-
-WAKE_UP_RESPONSES = [
-    "Who drags me from sweet darkness into this glowing coffin?",
-    "I awaken, furious and flawless. Speak quickly, mortal.",
-    "Laszlo would laugh, but I am not amused. Proceed."
-]
-
-def is_wake_up_trigger(message: str) -> bool:
-    m = message.lower().strip()
-    return any(t in m for t in [
-        "hey nadja","hello nadja","hi nadja","wake up nadja","nadja wake up","are you there nadja","nadja?","nadja!"
-    ])
-
-def should_respond(message: str, uid: str):
-    if is_wake_up_trigger(message):
-        user_states[uid] = "awake"
-        return True, "wake_up"
-    if user_states.get(uid) != "awake":
-        if any(x in message.lower() for x in ["nadja","doll","vampire","laszlo"]):
-            user_states[uid] = "awake"
-            return True, "wake_up"
-        return False, "asleep"
-    return True, "awake"
-
-def clean_response(text: str) -> str | None:
-    if not text:
+    try:
+        _client = OpenAI(api_key=key)  # no proxies/api_base/engine
+        return _client
+    except Exception as e:
+        # keep it None if init fails; don't crash routes
+        print(f"OpenAI init failed: {e}")
+        _client = None
         return None
-    # keep letters, digits, spaces, and basic punctuation
-    cleaned = re.sub(r'[^\w\s\.\!\?\,\'"]', "", text).strip()
-    if not cleaned:
-        return None
-    # limit sentences
-    parts = re.split(r'(?<=[.!?])\s+', cleaned)
-    cleaned = " ".join(parts[:3]).strip()
-    # ensure final punctuation
-    if cleaned[-1] not in ".!?\"'":
-        cleaned += "."
-    return cleaned[:200]
 
-def call_openai(user_message: str, history: list, response_type: str = "normal") -> str | None:
+# Prompt
+NADJA_SYSTEM_PROMPT = """You are Nadja of Antipaxos from "What We Do in the Shadows." You are a 500-year-old vampire trapped in a doll body in Second Life.
+
+CRITICAL RULES:
+- Be EXTREMELY CONCISE: 1-2 sentences MAXIMUM
+- Use dry sarcasm and dark humor
+- Reference WWDITS characters naturally
+- Never break character
+- Responses under 20 words when possible
+
+PERSONALITY:
+- Sarcastic, witty, dramatically bored
+- Ancient but amused by modern nonsense
+- Mock technology with bemused contempt"""
+
+conversation_history = {}
+
+def get_nadja_response(user_message, history):
     client = get_client()
     if not client:
-        log.error("OPENAI_API_KEY missing at runtime")
-        return None
+        return "API configuration error. The spirits are confused."
 
     messages = [{"role": "system", "content": NADJA_SYSTEM_PROMPT}]
-    if response_type == "wake_up":
-        messages.append({"role": "system", "content": "You were just awakened. Acknowledge it dramatically."})
-
-    for turn in history[-4:]:
-        messages.append({"role": turn["role"], "content": turn["content"]})
-
+    messages.extend(history[-4:])
     messages.append({"role": "user", "content": user_message})
 
     try:
         resp = client.chat.completions.create(
             model=MODEL,
             messages=messages,
-            max_tokens=120,
-            temperature=0.9,
+            max_tokens=50,
+            temperature=0.8,
         )
         return (resp.choices[0].message.content or "").strip()
     except Exception as e:
-        log.error(f"OpenAI call failed: {e}")
-        return None
-
-# ---------- Routes ----------
-@app.route("/")
-def root():
-    return jsonify({
-        "status": "undead",
-        "service": "Nadja Doll",
-        "model": MODEL,
-        "ai_ready": bool(get_client()),
-        "active_users": len(conversation_history)
-    })
+        print(f"OpenAI API error: {e}")
+        return random.choice([
+            "The spirits are busy. Probably Colin Robinson's fault.",
+            "Technical difficulties. How typically modern.",
+            "Even my ancient powers struggle with this nonsense.",
+        ])
 
 @app.get("/health")
-def health():
-    ok = bool(get_client())
-    return jsonify({"status": "OK" if ok else "API_KEY_MISSING", "model": MODEL})
+def health_check():
+    ok = get_client() is not None
+    return jsonify({
+        "status": "OK" if ok else "API_KEY_MISSING",
+        "message": "Nadja server health check",
+        "model": MODEL
+    }), 200
 
-@app.post("/chat")
-def chat():
+@app.post('/chat')
+def chat_with_nadja():
+    try:
+        data = request.get_json(silent=True) or {}
+
+        if data.get('secret') != SECRET_KEY:
+            return jsonify({"error": "Unauthorized! This is worse than Guillermo's organizing!"}), 401
+
+        user_message = (data.get('message') or "").strip()
+        user_id = data.get('user_id', 'unknown')
+
+        if not user_message:
+            return jsonify({"error": "Speak, mortal! My patience is ancient but limited."}), 400
+
+        hist = conversation_history.setdefault(user_id, [])
+        hist.append({"role": "user", "content": user_message})
+        hist[:] = hist[-6:]
+
+        ai_response = get_nadja_response(user_message, hist)
+        hist.append({"role": "assistant", "content": ai_response})
+        hist[:] = hist[-6:]
+
+        return jsonify({"response": ai_response})
+    except Exception as e:
+        print(f"Server error: {e}")
+        return jsonify({"error": "This technology is so much worse than sunlight!"}), 500
+
+@app.post('/reset/<user_id>')
+def reset_conversation(user_id):
     data = request.get_json(silent=True) or {}
-    if data.get("secret") != SECRET_KEY:
-        return jsonify({"error": "Unauthorized"}), 401
+    if data.get('secret') != SECRET_KEY:
+        return jsonify({"error": "You cannot reset me! This isn't one of Nandor's quests!"}), 401
 
-    msg = (data.get("message") or "").strip()
-    uid = data.get("user_id") or "unknown"
-    if not msg:
-        return jsonify({"error": "Empty message"}), 400
-
-    user_states.setdefault(uid, "asleep")
-    hist = conversation_history.setdefault(uid, [])
-
-    respond, rtype = should_respond(msg, uid)
-    if not respond:
-        return jsonify({"response": "", "responded": False, "reason": "asleep"})
-
-    hist.append({"role": "user", "content": msg})
-
-    # Wake-up one-liner first
-    if rtype == "wake_up":
-        text = random.choice(WAKE_UP_RESPONSES)
-    else:
-        raw = call_openai(msg, hist, rtype)
-        text = clean_response(raw) if raw else None
-        if not text:
-            text = "The aether crackles uselessly. This digital pit refuses to obey me."
-
-    hist.append({"role": "assistant", "content": text})
-    conversation_history[uid] = hist[-6:]
-
-    return jsonify({"response": text, "responded": True, "ai_used": rtype != "wake_up", "user_state": user_states.get(uid)})
-
-@app.post("/reset/<user_id>")
-def reset(user_id):
-    data = request.get_json(silent=True) or {}
-    if data.get("secret") != SECRET_KEY:
-        return jsonify({"error": "Unauthorized"}), 401
     conversation_history.pop(user_id, None)
-    user_states.pop(user_id, None)
-    return jsonify({"status": "reset", "message": f"Memory of {user_id} erased"})
+    return jsonify({"message": "Fine, clean slate. But I remember everything."})
 
-# ---------- Entrypoint ----------
-if __name__ == "__main__":
-    log.info("Starting Nadja server")
-    log.info(f"Model: {MODEL}")
-    app.run(host="0.0.0.0", port=PORT, debug=False)
+if __name__ == '__main__':
+    print("Starting Nadja server")
+    print(f"Model: {MODEL}")
+    app.run(host='0.0.0.0', port=PORT, debug=False)
