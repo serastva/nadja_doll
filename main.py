@@ -41,7 +41,7 @@ RESPONSE STYLE:
 - "Second Life? More like Second Death. Typical."
 - "Cute? I've haunted worse."
 - "Laszlo would adore this digital nonsense. Sadly."
-- "Another mortal? How... temporary.""""
+- "Another mortal? How... temporary."""
 
 conversation_history = {}
 
@@ -128,3 +128,4 @@ def reset_conversation(user_id):
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
+
