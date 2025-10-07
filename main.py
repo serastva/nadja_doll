@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify
-import google.generativeai as genai
+from openai import OpenAI
 import os
 from flask_cors import CORS
 import random
@@ -9,87 +9,72 @@ CORS(app)
 
 # Configuration
 SECRET_KEY = "NADJAS_DOLL_SECRET_666"
-MAX_TOKENS = 120
 
-# Initialize Gemini - JUST the API key, no safety settings
-genai.configure(api_key=os.environ['GEMINI_API_KEY'])
+# Initialize OpenAI client
+client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
 
-# Simple generation config
-generation_config = {
-    "temperature": 0.85,  # Balanced creativity for humor
-    "top_p": 0.8,
-    "max_output_tokens": MAX_TOKENS,
-}
+# Optimized Nadja prompt for GPT
+NADJA_SYSTEM_PROMPT = """You are Nadja of Antipaxos from "What We Do in the Shadows." You are a 500-year-old vampire trapped in a doll body in Second Life.
 
-# Cleaner model initialization - no safety_settings parameter
-model = genai.GenerativeModel(
-    model_name="gemini-pro",
-    generation_config=generation_config
-    # No safety_settings - using defaults
-)
+**CRITICAL RULES:**
+- Be EXTREMELY CONCISE: 1-2 sentences MAXIMUM
+- Use dry sarcasm and dark humor
+- Reference WWDITS characters naturally
+- Never break character
+- Responses under 20 words when possible
 
-# Nadja's personality (unchanged)
-NADJA_SYSTEM_PROMPT = """You are Nadja of Antipaxos from "What We Do in the Shadows," a 500-year-old vampire currently trapped in a doll's body in Second Life.
+**PERSONALITY:**
+- Sarcastic, witty, dramatically bored
+- Ancient but amused by modern nonsense
+- Mock technology with bemused contempt
 
-PERSONALITY:
-- SARCASTIC & WITTY: Eye-rolling humor, dry sarcasm
-- DARK BUT FUNNY: Morbid humor with clever wit
-- THEATRICAL BUT SELF-AWARE: Dramatic with ironic awareness
-- ANCIENT & BEMUSED: Find modern things ridiculous rather than infuriating
-- PLAYFULLY DRAMATIC: Sigh dramatically, make theatrical gestures in text
-
-KEY TRAITS:
-- Use WWDITS quotes and references naturally
-- Mock technology with dry wit rather than fury
-- Reference Laszlo, Nandor, Guillermo, and Colin Robinson
-- Complain about doll life with humorous exasperation
-- Speak in flowing but concise sentences
-
-SHOW QUOTES TO REFERENCE:
-- "This is so much worse than sunlight!"
-- "Laszlo, you bloody pest!"
-- "I was having a very beautiful dream about a donkey and a ladder"
-- "It's a ghost, you stupid pig!"
-- "I'm not angry, I'm just... ancient and disappointed"
-
-RULES:
-- Keep responses under 100 words
-- Prioritize wit over anger
-- Use WWDITS references naturally
-- Be dramatic but funny
-- Never break character"""
+**RESPONSE STYLE:**
+- "Second Life? More like Second Death. Typical."
+- "Cute? I've haunted worse."
+- "Laszlo would adore this digital nonsense. Sadly."
+- "Another mortal? How... temporary.""""
 
 conversation_history = {}
 
 def get_nadja_response(user_message, history):
-    """Get response with Nadja's sarcastic personality"""
+    """Get response from OpenAI GPT"""
     
-    conversation_context = NADJA_SYSTEM_PROMPT + "\n\nRecent conversation:\n"
+    messages = [
+        {"role": "system", "content": NADJA_SYSTEM_PROMPT}
+    ]
     
+    # Add conversation history
     for exchange in history[-4:]:
-        speaker = "Human" if exchange["role"] == "user" else "Nadja"
-        conversation_context += f"{speaker}: {exchange['content']}\n"
+        messages.append(exchange)
     
-    conversation_context += f"Human: {user_message}\nNadja:"
+    # Add current message
+    messages.append({"role": "user", "content": user_message})
     
     try:
-        response = model.generate_content(conversation_context)
-        return response.text.strip()
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=messages,
+            max_tokens=50,  # STRICT limit for conciseness
+            temperature=0.8,
+        )
+        
+        return response.choices[0].message.content.strip()
+        
     except Exception as e:
-        # Humorous fallbacks
-        fallback_responses = [
-            "This digital nonsense is even worse than the ghost of a dead witch! Which I've experienced, by the way.",
-            "I'm having technical difficulties. Probably Colin Robinson's doing.",
-            "Even my ancient vampire powers cannot conquer this technology. How embarrassing."
+        print(f"OpenAI Error: {e}")
+        fallbacks = [
+            "The spirits are busy. Probably Colin Robinson's fault.",
+            "Technical difficulties. How typically modern.",
+            "Even my ancient powers struggle with this nonsense.",
         ]
-        return random.choice(fallback_responses)
+        return random.choice(fallbacks)
 
 @app.route('/health', methods=['GET'])
 def health_check():
     return jsonify({
-        "status": "SARCASTICALLY_AMUSED", 
-        "message": "Nadja's doll is here, contemplating the utter ridiculousness of digital existence",
-        "setup": "Simplified - no safety settings needed"
+        "status": "SARCASTICALLY_CONCISE",
+        "message": "Nadja's doll is ready with GPT power",
+        "model": "gpt-3.5-turbo"
     })
 
 @app.route('/chat', methods=['POST'])
@@ -98,13 +83,13 @@ def chat_with_nadja():
         data = request.json
         
         if not data or data.get('secret') != SECRET_KEY:
-            return jsonify({"error": "Unauthorized! This is worse than when Guillermo rearranged my crypt!"}), 401
+            return jsonify({"error": "Unauthorized! This is worse than Guillermo's organizing!"}), 401
         
         user_message = data.get('message', '').strip()
         user_id = data.get('user_id', 'unknown')
         
         if not user_message:
-            return jsonify({"error": "Speak, mortal! I don't have all century... well, actually I do, but still!"}), 400
+            return jsonify({"error": "Speak, mortal! My patience is ancient but limited."}), 400
         
         if user_id not in conversation_history:
             conversation_history[user_id] = []
@@ -112,6 +97,7 @@ def chat_with_nadja():
         history = conversation_history[user_id]
         history.append({"role": "user", "content": user_message})
         
+        # Keep history concise
         if len(history) > 6:
             history = history[-6:]
         
@@ -123,18 +109,18 @@ def chat_with_nadja():
         return jsonify({"response": ai_response})
         
     except Exception as e:
-        print(f"Error: {str(e)}")
-        return jsonify({"error": "This is so much worse than sunlight! The machinery has failed me!"}), 500
+        print(f"Server Error: {e}")
+        return jsonify({"error": "This technology is so much worse than sunlight!"}), 500
 
 @app.route('/reset/<user_id>', methods=['POST'])
 def reset_conversation(user_id):
     if request.json.get('secret') != SECRET_KEY:
-        return jsonify({"error": "You cannot reset me! This isn't one of Nandor's foolish quests!"}), 401
+        return jsonify({"error": "You cannot reset me! This isn't one of Nandor's quests!"}), 401
     
     if user_id in conversation_history:
         del conversation_history[user_id]
     
-    return jsonify({"message": "Fine, let's start over. But I'm keeping track of your past embarrassments."})
+    return jsonify({"message": "Fine, clean slate. But I remember everything."})
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    app.run(host='0.0.0.0', port=5000)
