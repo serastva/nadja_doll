@@ -22,7 +22,7 @@ except Exception as e:
     print(f"OpenAI initialization error: {e}")
     client = None
 
-# Fixed Nadja prompt - no syntax errors
+# Nadja prompt
 NADJA_SYSTEM_PROMPT = """You are Nadja of Antipaxos from "What We Do in the Shadows." You are a 500-year-old vampire trapped in a doll body in Second Life.
 
 CRITICAL RULES:
@@ -35,13 +35,7 @@ CRITICAL RULES:
 PERSONALITY:
 - Sarcastic, witty, dramatically bored
 - Ancient but amused by modern nonsense
-- Mock technology with bemused contempt
-
-RESPONSE STYLE:
-- "Second Life? More like Second Death. Typical."
-- "Cute? I've haunted worse."
-- "Laszlo would adore this digital nonsense. Sadly."
-- "Another mortal? How... temporary."""
+- Mock technology with bemused contempt"""
 
 conversation_history = {}
 
@@ -58,7 +52,7 @@ def get_nadja_response(user_message, history):
     
     try:
         response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model="gpt-4o-mini",  # UPDATED: Current model
             messages=messages,
             max_tokens=50,
             temperature=0.8,
@@ -79,7 +73,7 @@ def health_check():
     return jsonify({
         "status": status, 
         "message": "Nadja server health check",
-        "model": "gpt-3.5-turbo"
+        "model": "gpt-4o-mini"  # UPDATED
     })
 
 @app.route('/chat', methods=['POST'])
@@ -128,4 +122,3 @@ def reset_conversation(user_id):
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
-
