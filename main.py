@@ -1,12 +1,12 @@
-# main.py — Nadja Doll with OpenAI
+# main.py — Nadja Doll with Official OpenAI Package
 import os
 import re
 import random
 import time
 import logging
-import requests
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+from openai import OpenAI
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -17,11 +17,27 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 SECRET_KEY = os.environ.get("SECRET_KEY", "NADJAS_DOLL_SECRET_666")
 PORT = int(os.environ.get("PORT", "10000"))
 
-# Check OpenAI key
+# Initialize OpenAI client
 ai_available = False
+client = None
+
 if OPENAI_API_KEY:
-    ai_available = True
-    logger.info("✅ OpenAI API key found")
+    try:
+        client = OpenAI(api_key=OPENAI_API_KEY)
+        # Test the connection
+        test_response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": "Say 'TEST' only."}],
+            max_tokens=10
+        )
+        if test_response.choices[0].message.content:
+            ai_available = True
+            logger.info("✅ OpenAI client configured successfully")
+        else:
+            raise Exception("Test failed")
+    except Exception as e:
+        logger.error(f"❌ OpenAI setup failed: {e}")
+        client = None
 else:
     logger.error("❌ OPENAI_API_KEY environment variable is not set!")
 
@@ -130,13 +146,8 @@ def clean_response(text):
     return cleaned[:200]
 
 def call_openai(user_message, history, response_type="normal"):
-    """Call OpenAI API"""
+    """Call OpenAI API using official client"""
     try:
-        headers = {
-            "Authorization": f"Bearer {OPENAI_API_KEY}",
-            "Content-Type": "application/json"
-        }
-        
         # Build conversation history for OpenAI
         messages = [
             {"role": "system", "content": NADJA_SYSTEM_PROMPT}
@@ -154,25 +165,16 @@ def call_openai(user_message, history, response_type="normal"):
         # Add current message
         messages.append({"role": "user", "content": user_message})
         
-        data = {
-            "model": "gpt-3.5-turbo",
-            "messages": messages,
-            "max_tokens": 150,
-            "temperature": 0.9
-        }
-        
-        response = requests.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers=headers,
-            json=data,
-            timeout=30
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=messages,
+            max_tokens=150,
+            temperature=0.9
         )
         
-        if response.status_code == 200:
-            result = response.json()
-            return result["choices"][0]["message"]["content"].strip()
+        if response.choices[0].message.content:
+            return response.choices[0].message.content.strip()
         else:
-            logger.error(f"OpenAI API error: {response.status_code} - {response.text}")
             return None
             
     except Exception as e:
@@ -184,7 +186,7 @@ def home():
     return jsonify({
         "status": "undead", 
         "service": "Nadja Doll",
-        "version": "3.0-openai",
+        "version": "3.0-openai-official",
         "ai_ready": ai_available,
         "ai_service": "openai",
         "active_users": len(conversation_history)
@@ -239,7 +241,7 @@ def chat():
             logger.info(f"🎭 Nadja waking up for {uid}")
         
         # Try OpenAI for normal responses
-        elif ai_available and OPENAI_API_KEY:
+        elif ai_available and client:
             try:
                 logger.info(f"🎭 Sending to OpenAI: '{msg}'")
                 
@@ -307,6 +309,6 @@ def reset_conversation(user_id):
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
-    logger.info(f"🚀 Nadja Server Started with OpenAI!")
+    logger.info(f"🚀 Nadja Server Started with Official OpenAI Client!")
     logger.info(f"🔑 OpenAI Available: {ai_available}")
     app.run(host="0.0.0.0", port=PORT, debug=False)
