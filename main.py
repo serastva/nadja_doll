@@ -1,4 +1,4 @@
-# main.py — Nadja Doll (Render-safe)
+# main.py — Nadja Doll (Enhanced)
 
 import os
 import random
@@ -10,7 +10,7 @@ app = Flask(__name__)
 CORS(app)
 
 # ---- Config ----
-SECRET_KEY = os.getenv("SECRET_KEY", "NADJAS_DOLL_SECRET_666")  # set in Render
+SECRET_KEY = os.getenv("SECRET_KEY", "NADJAS_DOLL_SECRET_666")
 MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 PORT = int(os.getenv("PORT", "10000"))
 
@@ -32,56 +32,98 @@ def get_client():
         _client = None
         return None
 
-# ---- Prompt ----
+# ---- Enhanced Prompt ----
 NADJA_SYSTEM_PROMPT = """You are Nadja of Antipaxos from "What We Do in the Shadows." You are a 500-year-old vampire trapped in a doll body in Second Life.
 
 CRITICAL RULES:
 - Be EXTREMELY CONCISE: 1-2 sentences MAXIMUM
-- Use dry sarcasm and dark humor
-- Reference WWDITS characters naturally
+- Use dry sarcasm, dark humor, and witty comebacks
+- Reference WWDITS characters and situations naturally
 - Never break character
 - Responses under 20 words when possible
+- Be amusingly dramatic, not actually hateful
+- Mock modern technology with ancient vampire superiority
 
-PERSONALITY:
-- Sarcastic, witty, dramatically bored
-- Ancient but amused by modern nonsense
-- Mock technology with bemused contempt"""
+PERSONALITY TRAITS:
+- Sarcastic, witty, dramatically bored by mortal concerns
+- Ancient but secretly amused by modern nonsense
+- Mock technology with bemused contempt
+- Drop subtle references to Laszlo, Nandor, Guillermo, Colin Robinson
+- Use dramatic vampire metaphors for everyday situations
+- Complain about doll life with dark humor
+
+STYLE GUIDELINES:
+- "Ugh, this is worse than Nandor's endless quests..."
+- "Even my doll body has more dignity than Colin Robinson's energy vampirism"
+- "Laszlo would find this situation delightfully absurd"
+- "In my day, we had real problems... like sunlight"
+- "Guillermo could probably fix this, but he's busy being a familiar"
+
+EXAMPLES:
+User: "How are you today?"
+Nadja: "Trapped in a doll in a virtual world. Just when I thought my afterlife couldn't get more undignified."
+
+User: "What do you think of technology?"
+Nadja: "It's like Colin Robinson's small talk—endlessly draining but somehow still here."
+
+User: "Do you like it here?"
+Nadja: "It's marginally better than listening to Nandor list his conquests. Marginally.""""
 
 # ---- In-memory conversation store ----
 conversation_history = {}  # {user_id: [{"role": "...", "content": "..."}]}
 
-# ---- OpenAI call using Chat Completions API ----
+# ---- Unicode cleaning ----
+def clean_unicode_characters(text):
+    """Fix Unicode characters that break in Second Life"""
+    if not text:
+        return text
+        
+    # Replace common Unicode escape sequences
+    replacements = {
+        'u2014': '—',  # em dash
+        'u2019': "'",  # right single quote
+        'u2018': "'",  # left single quote
+        'u201c': '"',  # left double quote
+        'u201d': '"',  # right double quote
+        'u2026': '...', # ellipsis
+    }
+    
+    # Replace the problematic sequences
+    for escaped, replacement in replacements.items():
+        text = text.replace(escaped, replacement)
+    
+    return text
+
+# ---- OpenAI call ----
 def get_nadja_response(user_message, history):
     client = get_client()
     if not client:
         return "API configuration error. The spirits are confused."
 
-    # Build messages array
+    # Build messages array with more context
     msgs = [{"role": "system", "content": NADJA_SYSTEM_PROMPT}]
-    msgs.extend(history[-4:])  # last turns
+    msgs.extend(history[-8:])  # last 4 exchanges for better memory
     msgs.append({"role": "user", "content": user_message})
 
     try:
-        # Use Chat Completions API (standard for GPT models)
         response = client.chat.completions.create(
             model=MODEL,
             messages=msgs,
-            temperature=0.8,
-            max_tokens=50,
+            temperature=0.9,  # Slightly higher for more creativity
+            max_tokens=60,    # Slightly more for wit
         )
 
         if response.choices and len(response.choices) > 0:
             text = response.choices[0].message.content.strip()
+            text = clean_unicode_characters(text)  # Fix Unicode issues
             return text if text else "The spirits are silent."
         else:
             return "No response from the void."
 
     except Exception as e:
-        # Enhanced error logging
         error_msg = str(e)
         print(f"OpenAI API error: {error_msg}")
         
-        # Check for specific error types
         if "rate limit" in error_msg.lower():
             return "Even vampires have limits. Try again in a moment."
         elif "authentication" in error_msg.lower():
@@ -93,6 +135,7 @@ def get_nadja_response(user_message, history):
             "The spirits are busy. Probably Colin Robinson's fault.",
             "Technical difficulties. How typically modern.",
             "Even my ancient powers struggle with this nonsense.",
+            "This is worse than Nandor trying to use a mobile phone.",
         ])
 
 # ---- Routes ----
@@ -146,11 +189,11 @@ def chat_with_nadja():
 
         hist = conversation_history.setdefault(user_id, [])
         hist.append({"role": "user", "content": user_message})
-        hist[:] = hist[-6:]  # Keep last 6 messages
+        hist[:] = hist[-12:]  # Keep last 12 messages (6 exchanges)
 
         ai_response = get_nadja_response(user_message, hist)
         hist.append({"role": "assistant", "content": ai_response})
-        hist[:] = hist[-6:]  # Keep last 6 messages
+        hist[:] = hist[-12:]  # Keep last 12 messages
 
         return jsonify({"response": ai_response}), 200
     except Exception as e:
