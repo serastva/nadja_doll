@@ -6,6 +6,9 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from openai import OpenAI
 
+import re
+import unicodedata
+
 app = Flask(__name__)
 CORS(app)
 
@@ -74,29 +77,38 @@ Nadja: "It's marginally better than listening to Nandor list his conquests. Marg
 conversation_history = {}  # {user_id: [{"role": "...", "content": "..."}]}
 
 # ---- Unicode cleaning ----
-def clean_unicode_characters(text):
+ASCII_PUNCT_MAP = {
+    "\u2018": "'", "\u2019": "'",   # curly single quotes
+    "\u201C": '"', "\u201D": '"',   # curly double quotes
+    "\u2013": "-", "\u2014": "-",   # en/em dashes
+    "\u2026": "...",                # ellipsis
+    "\u00A0": " ", "\u2009": " ", "\u200A": " ", "\u200B": "",  # spaces/ZWSP
+    "\u2212": "-",                  # minus sign
+    "\u00B7": "*", "\u2022": "*",   # bullets
+}
+
+def clean_ascii(text: str) -> str:
     if not text:
         return text
-    
-    # THIS IS THE FIX - properly decode escaped sequences
-    try:
-        text = text.encode('latin-1').decode('unicode-escape')
-    except:
-        pass
-    
-    # Then replace actual Unicode characters
-    replacements = {
-        '\u2019': "'",  # This will catch the RIGHT SINGLE QUOTE
-        '\u2018': "'",  
-        '\u2014': '—',
-        '\u201c': '"',
-        '\u201d': '"',
-        '\u2026': '...',
-    }
-    
-    for unicode_char, replacement in replacements.items():
-        text = text.replace(unicode_char, replacement)
-    
+
+    # 1) Decode explicit escapes like \\u2014
+    def _u(m):
+        try:
+            return chr(int(m.group(1), 16))
+        except Exception:
+            return m.group(0)
+    text = re.sub(r"\\u([0-9a-fA-F]{4})", _u, text)
+
+    # 2) Replace common Unicode punctuation with ASCII
+    for u, a in ASCII_PUNCT_MAP.items():
+        text = text.replace(u, a)
+
+    # 3) Normalize, then drop remaining non-ASCII
+    text = unicodedata.normalize("NFKC", text)
+    text = "".join(ch if ord(ch) < 128 else " " for ch in text)
+
+    # 4) Collapse whitespace
+    text = re.sub(r"\s+", " ", text).strip()
     return text
 
 # ---- OpenAI call ----
@@ -120,7 +132,7 @@ def get_nadja_response(user_message, history):
 
         if response.choices and len(response.choices) > 0:
             text = response.choices[0].message.content.strip()
-            text = clean_unicode_characters(text)  # Fix Unicode issues
+            text = clean_ascii(text)  # Fix Unicode issues
             return text if text else "The spirits are silent."
         else:
             return "No response from the void."
@@ -200,7 +212,7 @@ def chat_with_nadja():
         hist.append({"role": "assistant", "content": ai_response})
         hist[:] = hist[-12:]  # Keep last 12 messages
 
-        return jsonify({"response": ai_response}), 200
+        return jsonify({"response": clean_ascii(ai_response)}), 200
     except Exception as e:
         print(f"Server error: {e!r}")
         return jsonify({"error": "This technology is so much worse than sunlight!"}), 500
@@ -217,6 +229,7 @@ if __name__ == "__main__":
     print("Starting Nadja server")
     print(f"Model: {MODEL}")
     app.run(host="0.0.0.0", port=PORT, debug=False)
+
 
 
 
