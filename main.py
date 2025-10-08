@@ -50,7 +50,7 @@ PERSONALITY:
 # ---- In-memory conversation store ----
 conversation_history = {}  # {user_id: [{"role": "...", "content": "..."}]}
 
-# ---- OpenAI call using Responses API ----
+# ---- OpenAI call using Chat Completions API ----
 def get_nadja_response(user_message, history):
     client = get_client()
     if not client:
@@ -62,45 +62,33 @@ def get_nadja_response(user_message, history):
     msgs.append({"role": "user", "content": user_message})
 
     try:
-        # Prefer Responses API
-        resp = client.responses.create(
+        # Use Chat Completions API (standard for GPT models)
+        response = client.chat.completions.create(
             model=MODEL,
-            input=msgs,
+            messages=msgs,
             temperature=0.8,
-            max_output_tokens=50,
+            max_tokens=50,
         )
 
-        # Fast path (SDK >= 1.30 provides output_text)
-        text = getattr(resp, "output_text", None)
-        if text:
-            return text.strip()
+        if response.choices and len(response.choices) > 0:
+            text = response.choices[0].message.content.strip()
+            return text if text else "The spirits are silent."
+        else:
+            return "No response from the void."
 
-        # Fallback parse
-        out = []
-        for item in getattr(resp, "output", []) or []:
-            if getattr(item, "type", None) == "message":
-                for c in getattr(item, "content", []) or []:
-                    if getattr(c, "type", None) == "text":
-                        out.append(getattr(c, "text", ""))
-        text = " ".join(out).strip()
-        if text:
-            return text
-
-        return "The spirits are silent."
     except Exception as e:
-        # Log rich HTTP error if available
-        try:
-            r = getattr(e, "response", None)
-            if r is not None:
-                try:
-                    body = r.text
-                except Exception:
-                    body = "<no body>"
-                print(f"OpenAI API error: status={getattr(r,'status_code', '?')} body={body}")
-            else:
-                print(f"OpenAI API error: {repr(e)}")
-        except Exception as _:
-            print("OpenAI logging failed")
+        # Enhanced error logging
+        error_msg = str(e)
+        print(f"OpenAI API error: {error_msg}")
+        
+        # Check for specific error types
+        if "rate limit" in error_msg.lower():
+            return "Even vampires have limits. Try again in a moment."
+        elif "authentication" in error_msg.lower():
+            return "My ancient powers cannot authenticate. Typical modern nonsense."
+        elif "billing" in error_msg.lower() or "quota" in error_msg.lower():
+            return "The cosmic energies require payment. How vulgar."
+        
         return random.choice([
             "The spirits are busy. Probably Colin Robinson's fault.",
             "Technical difficulties. How typically modern.",
@@ -127,22 +115,19 @@ def diag():
     if not client:
         return jsonify({"ok": False, "reason": "no_client"}), 500
     try:
-        r = client.responses.create(
+        response = client.chat.completions.create(
             model=MODEL,
-            input=[{"role": "system", "content": "reply with exactly OK"}, {"role": "user", "content": "ping"}],
+            messages=[
+                {"role": "system", "content": "reply with exactly OK"},
+                {"role": "user", "content": "ping"}
+            ],
             temperature=0,
-            max_output_tokens=3,
+            max_tokens=3,
         )
-        preview = getattr(r, "output_text", "").strip()
+        preview = response.choices[0].message.content.strip() if response.choices else "no response"
         return jsonify({"ok": True, "preview": preview}), 200
     except Exception as e:
         payload = {"ok": False, "error": str(e)}
-        try:
-            res = getattr(e, "response", None)
-            if res is not None:
-                payload.update({"status": getattr(res, "status_code", None), "body": getattr(res, "text", None)})
-        except Exception:
-            pass
         return jsonify(payload), 500
 
 @app.post("/chat")
@@ -161,11 +146,11 @@ def chat_with_nadja():
 
         hist = conversation_history.setdefault(user_id, [])
         hist.append({"role": "user", "content": user_message})
-        hist[:] = hist[-6:]
+        hist[:] = hist[-6:]  # Keep last 6 messages
 
         ai_response = get_nadja_response(user_message, hist)
         hist.append({"role": "assistant", "content": ai_response})
-        hist[:] = hist[-6:]
+        hist[:] = hist[-6:]  # Keep last 6 messages
 
         return jsonify({"response": ai_response}), 200
     except Exception as e:
