@@ -74,23 +74,27 @@ conversation_history = {}  # {user_id: [{"role": "...", "content": "..."}]}
 
 # ---- Unicode cleaning ----
 def clean_unicode_characters(text):
-    """Fix Unicode characters that break in Second Life"""
     if not text:
         return text
-        
-    # Replace common Unicode escape sequences
+    
+    # THIS IS THE FIX - properly decode escaped sequences
+    try:
+        text = text.encode('latin-1').decode('unicode-escape')
+    except:
+        pass
+    
+    # Then replace actual Unicode characters
     replacements = {
-        'u2014': '—',  # em dash
-        'u2019': "'",  # right single quote
-        'u2018': "'",  # left single quote
-        'u201c': '"',  # left double quote
-        'u201d': '"',  # right double quote
-        'u2026': '...', # ellipsis
+        '\u2019': "'",  # This will catch the RIGHT SINGLE QUOTE
+        '\u2018': "'",  
+        '\u2014': '—',
+        '\u201c': '"',
+        '\u201d': '"',
+        '\u2026': '...',
     }
     
-    # Replace the problematic sequences
-    for escaped, replacement in replacements.items():
-        text = text.replace(escaped, replacement)
+    for unicode_char, replacement in replacements.items():
+        text = text.replace(unicode_char, replacement)
     
     return text
 
@@ -212,4 +216,5 @@ if __name__ == "__main__":
     print("Starting Nadja server")
     print(f"Model: {MODEL}")
     app.run(host="0.0.0.0", port=PORT, debug=False)
+
 
