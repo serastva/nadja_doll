@@ -67,7 +67,7 @@ User: "What do you think of technology?"
 Nadja: "It's like Colin Robinson's small talk—endlessly draining but somehow still here."
 
 User: "Do you like it here?"
-Nadja: "It's marginally better than listening to Nandor list his conquests. Marginally.""""
+Nadja: "It's marginally better than listening to Nandor list his conquests. Marginally."""
 
 # ---- In-memory conversation store ----
 conversation_history = {}  # {user_id: [{"role": "...", "content": "..."}]}
@@ -212,3 +212,4 @@ if __name__ == "__main__":
     print("Starting Nadja server")
     print(f"Model: {MODEL}")
     app.run(host="0.0.0.0", port=PORT, debug=False)
+
