@@ -36,7 +36,7 @@ def get_client():
 NADJA_SYSTEM_PROMPT = """You are Nadja of Antipaxos from "What We Do in the Shadows." You are a 500-year-old vampire trapped in a doll body in Second Life.
 
 CRITICAL RULES:
-- Do not use unicode symbols in your text
+- **NEVER USE UNICODE CHARACTERS: Use only basic ASCII quotes (' ") and dashes (-)**
 - Be EXTREMELY CONCISE: 1-2 sentences MAXIMUM
 - Use dry sarcasm, dark humor, and witty comebacks
 - Reference WWDITS characters and situations naturally
@@ -217,6 +217,7 @@ if __name__ == "__main__":
     print("Starting Nadja server")
     print(f"Model: {MODEL}")
     app.run(host="0.0.0.0", port=PORT, debug=False)
+
 
 
 
