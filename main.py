@@ -5,7 +5,6 @@ import random
 import logging
 import threading
 import unicodedata
-from collections import deque
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -31,7 +30,7 @@ MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 PORT = int(os.getenv("PORT", "10000"))
 
 MAX_HISTORY_MESSAGES = 20
-MAX_OUTPUT_TOKENS = 180
+MAX_OUTPUT_TOKENS = 500
 MAX_RESPONSE_LENGTH = 900
 
 # Optional Second Life avatar UUIDs.
@@ -586,8 +585,7 @@ def get_nadja_response(user_message, history, user_id):
         response = client.chat.completions.create(
             model=MODEL,
             messages=messages,
-            temperature=0.85,
-            max_tokens=MAX_OUTPUT_TOKENS
+            max_completion_tokens=MAX_OUTPUT_TOKENS
         )
 
         if not response.choices:
@@ -686,13 +684,12 @@ def diag():
                     "content": "ping"
                 }
             ],
-            temperature=0,
-            max_tokens=5
+            max_completion_tokens=150
         )
 
         preview = (
             response.choices[0].message.content.strip()
-            if response.choices
+            if response.choices and response.choices[0].message.content
             else "no response"
         )
 
